@@ -5,11 +5,12 @@ import {
   Database,
   Download,
   RotateCcw,
-  CheckCircle2,
   AlertTriangle,
   UploadCloud,
   FileCode,
-  ShieldCheck,
+  RefreshCw,
+  Globe,
+  Key,
 } from 'lucide-react'
 import { useCRM } from '../../context/CRMContext'
 import { Modal } from '../FeedbackAndModal'
@@ -223,6 +224,58 @@ export const ConfiguracoesSection: React.FC = () => {
                 placeholder="Ex: Banco Inter V2 / Asaas / Cora"
                 className="w-full px-3 py-2 text-sm bg-white border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#0F4C5C]"
               />
+            </div>
+
+            {/* Integração Multi Foco */}
+            <div className="sm:col-span-2 pt-3 border-t border-[#E2E8F0]">
+              <div className="flex items-center gap-2 mb-2">
+                <RefreshCw className="w-4 h-4 text-[#0F4C5C]" />
+                <h4 className="text-xs font-semibold text-[#1A202C] uppercase tracking-wider">
+                  Integração com Multi Foco
+                </h4>
+              </div>
+              <p className="text-xs text-[#5A6B7B] mb-3">
+                Configure a URL base e o token de autenticação para sincronizar o identificador dos
+                clientes via busca por documento (GET /v1/clients/filter/search/{'{termo}'}).
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#1A202C] mb-1 flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-[#5A6B7B]" />
+                <span>Base URL Multi Foco</span>
+              </label>
+              <input
+                type="url"
+                value={companyForm.multiFocoBaseUrl || ''}
+                onChange={(e) =>
+                  setCompanyForm({ ...companyForm, multiFocoBaseUrl: e.target.value })
+                }
+                placeholder="https://api.multifoco.com.br"
+                className="w-full px-3 py-2 text-sm bg-white border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#0F4C5C]"
+              />
+              <p className="text-[11px] text-[#5A6B7B] mt-1">
+                Ex: https://api.multifoco.com.br ou ambiente homologado
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-[#1A202C] mb-1 flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-[#5A6B7B]" />
+                <span>Token de Acesso / API Key</span>
+              </label>
+              <input
+                type="password"
+                value={companyForm.multiFocoApiToken || ''}
+                onChange={(e) =>
+                  setCompanyForm({ ...companyForm, multiFocoApiToken: e.target.value })
+                }
+                placeholder="Bearer eyJhbGciOi..."
+                className="w-full px-3 py-2 text-sm bg-white border border-[#E2E8F0] rounded-lg focus:outline-none focus:border-[#0F4C5C]"
+              />
+              <p className="text-[11px] text-[#5A6B7B] mt-1">
+                Enviado no cabeçalho Authorization da requisição
+              </p>
             </div>
 
             <div className="sm:col-span-2">

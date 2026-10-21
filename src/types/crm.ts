@@ -8,10 +8,12 @@ export type SectionId =
   | 'configuracoes'
 
 export type ClientStatus = 'ativo' | 'inativo'
+export type ClientType = 'PF' | 'PJ'
 
 export interface Client {
   id: string
   name: string
+  type: ClientType
   email: string
   phone: string
   document: string // CPF ou CNPJ
@@ -20,6 +22,9 @@ export interface Client {
   neighborhood: string
   city: string
   state: string
+  monthlyValue?: number
+  dueDay?: number // 1 a 31
+  multifoco_client_id?: string
   notes?: string
   status: ClientStatus
   createdAt: string
@@ -123,6 +128,8 @@ export interface CompanySettings {
   email: string
   phone: string
   boletoProvider: string
+  multiFocoBaseUrl?: string
+  multiFocoApiToken?: string
 }
 
 export interface UserProfile {

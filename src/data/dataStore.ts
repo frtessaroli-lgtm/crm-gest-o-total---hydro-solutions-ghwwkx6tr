@@ -36,6 +36,23 @@ class DataStoreService {
           Array.isArray(parsed.invoices) &&
           Array.isArray(parsed.charges)
         ) {
+          // Garante retrocompatibilidade: campos novos em clientes legados
+          parsed.clients = parsed.clients.map((c) => {
+            const cleanDoc = (c.document || '').replace(/\D/g, '')
+            return {
+              ...c,
+              type: c.type || (cleanDoc.length === 11 ? 'PF' : 'PJ'),
+              monthlyValue: typeof c.monthlyValue === 'number' ? c.monthlyValue : 0,
+              dueDay: typeof c.dueDay === 'number' ? c.dueDay : 10,
+              multifoco_client_id: c.multifoco_client_id || undefined,
+            }
+          })
+          if (parsed.companySettings) {
+            parsed.companySettings.multiFocoBaseUrl =
+              parsed.companySettings.multiFocoBaseUrl || 'https://api.multifoco.com.br'
+            parsed.companySettings.multiFocoApiToken =
+              parsed.companySettings.multiFocoApiToken || ''
+          }
           return parsed
         }
       }
@@ -139,6 +156,7 @@ class DataStoreService {
     const newId = 'cli-' + Date.now()
     const created: Client = {
       ...client,
+      type: client.type || (client.document.replace(/\D/g, '').length === 11 ? 'PF' : 'PJ'),
       id: newId,
       createdAt: new Date().toISOString(),
     }

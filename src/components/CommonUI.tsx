@@ -134,6 +134,12 @@ export const StatusBadge: React.FC<{
         text = 'text-[#0F4C5C]'
         dot = 'bg-[#0F4C5C]'
         break
+      case 'assinada':
+        label = 'Assinada'
+        bg = 'bg-[#2E9E6B]/15'
+        text = 'text-[#2E9E6B]'
+        dot = 'bg-[#2E9E6B]'
+        break
       case 'aceita':
         label = 'Aceita'
         bg = 'bg-[#2E9E6B]/10'
@@ -145,6 +151,12 @@ export const StatusBadge: React.FC<{
         bg = 'bg-[#C0392B]/10'
         text = 'text-[#C0392B]'
         dot = 'bg-[#C0392B]'
+        break
+      default:
+        label = status
+        bg = 'bg-slate-100'
+        text = 'text-slate-700'
+        dot = 'bg-slate-500'
         break
     }
   } else if (type === 'os') {

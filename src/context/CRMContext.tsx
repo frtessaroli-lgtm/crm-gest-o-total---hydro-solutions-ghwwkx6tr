@@ -63,10 +63,17 @@ interface CRMContextType {
   saveClient: (client: Omit<Client, 'id' | 'createdAt'> & { id?: string }) => Promise<Client>
   deleteClient: (id: string) => Promise<void>
   saveProposal: (
-    proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
+    proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & {
+      id?: string
+      code?: string
+      zapsignDocToken?: string
+      signatureLink?: string
+      signedAt?: string
+    },
   ) => Promise<Proposal>
   updateProposalStatus: (id: string, status: Proposal['status']) => Promise<void>
   deleteProposal: (id: string) => Promise<void>
+  enviarParaAssinatura: (proposalId: string) => Promise<{ signatureUrl: string; docToken: string }>
   saveServiceOrder: (
     os: Omit<ServiceOrder, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
   ) => Promise<ServiceOrder>
@@ -160,6 +167,17 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       pb.collection(col)
         .subscribe('*', (e) => {
           if (!cancelled) {
+            if (col === 'propostas' && e.action === 'update') {
+              const oldProp = DataStore.getProposalById(e.record?.id)
+              const newStatus = e.record?.status
+              if (oldProp && oldProp.status !== 'assinada' && newStatus === 'assinada') {
+                addToast(
+                  'success',
+                  `A proposta ${e.record?.codigo || oldProp.code} foi assinada com sucesso via ZapSign!`,
+                  'Proposta assinada!',
+                )
+              }
+            }
             DataStore.handleRealtimeEvent(col, e.action, e.record)
           }
         })
@@ -310,6 +328,38 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         addToast('info', 'Proposta excluída com sucesso.')
       } catch (err: any) {
         addToast('error', err?.message || 'Erro ao excluir proposta.', 'Falha')
+      }
+    },
+    [addToast],
+  )
+
+  const enviarParaAssinatura = useCallback(
+    async (proposalId: string) => {
+      try {
+        const response = await pb.send('/propostas/enviar-assinatura', {
+          method: 'POST',
+          body: { id: proposalId },
+        })
+
+        const signatureUrl = response?.signature_url || response?.signatureUrl || ''
+        const docToken = response?.doc_token || response?.docToken || ''
+
+        addToast(
+          'success',
+          'Documento enviado para assinatura via ZapSign! Link disponível.',
+          'ZapSign',
+        )
+        // Refresh local data to ensure proposal state is updated
+        DataStore.fetchAll().catch(() => {})
+        return { signatureUrl, docToken }
+      } catch (err: any) {
+        const errorMsg =
+          err?.response?.message ||
+          err?.data?.message ||
+          err?.message ||
+          'Erro ao enviar proposta para assinatura via ZapSign.'
+        addToast('error', errorMsg, 'Falha no Envio')
+        throw err
       }
     },
     [addToast],
@@ -490,6 +540,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveProposal,
     updateProposalStatus,
     deleteProposal,
+    enviarParaAssinatura,
     saveServiceOrder,
     completeServiceOrder,
     updateServiceOrderStatus,

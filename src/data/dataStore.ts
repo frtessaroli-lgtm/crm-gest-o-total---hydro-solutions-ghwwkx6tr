@@ -63,9 +63,12 @@ function mapProposal(record: any, clientMap: Map<string, string>): Proposal {
     description: record.descricao || '',
     items: parsedItems,
     total: typeof record.valor === 'number' ? record.valor : 0,
-    status: record.status || 'rascunho',
+    status: (record.status as Proposal['status']) || 'rascunho',
     createdAt: record.created || new Date().toISOString(),
     validUntil: record.validade || undefined,
+    zapsignDocToken: record.zapsign_doc_token || undefined,
+    signatureLink: record.link_assinatura || undefined,
+    signedAt: record.assinado_em || undefined,
   }
 }
 
@@ -522,9 +525,12 @@ class PocketBaseDataStore {
       titulo: proposal.title,
       descricao: proposal.description || '',
       valor: computedTotal,
-      status: proposal.status,
+      status: proposal.status || 'rascunho',
       validade: proposal.validUntil || '',
       itens: JSON.stringify(proposal.items || []),
+      zapsign_doc_token: proposal.zapsignDocToken || '',
+      link_assinatura: proposal.signatureLink || '',
+      assinado_em: proposal.signedAt || '',
     }
 
     let record: any

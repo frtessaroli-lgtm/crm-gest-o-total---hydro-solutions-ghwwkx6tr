@@ -30,7 +30,7 @@ export interface Client {
   createdAt: string
 }
 
-export type ProposalStatus = 'rascunho' | 'enviada' | 'aceita' | 'recusada'
+export type ProposalStatus = 'rascunho' | 'enviada' | 'assinada' | 'recusada' | 'aceita'
 
 export interface ProposalItem {
   id: string
@@ -52,6 +52,9 @@ export interface Proposal {
   status: ProposalStatus
   createdAt: string
   validUntil?: string
+  zapsignDocToken?: string
+  signatureLink?: string
+  signedAt?: string
 }
 
 export type ServiceOrderStatus = 'aberta' | 'em_andamento' | 'concluida' | 'cancelada'

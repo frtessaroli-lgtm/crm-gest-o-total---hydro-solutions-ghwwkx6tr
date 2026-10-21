@@ -224,6 +224,17 @@ export const PropostasSection: React.FC = () => {
 
   // Ação de Enviar para Assinatura (ZapSign)
   const handleSendToSignature = async (proposal: Proposal) => {
+    // Verificação preventiva de e-mail do cliente antes do envio
+    const targetClient = clients.find((c) => c.id === proposal.clientId)
+    if (targetClient && (!targetClient.email || targetClient.email.trim() === '')) {
+      addToast(
+        'error',
+        `O cliente "${targetClient.name}" não possui e-mail cadastrado. Para gerar o documento de assinatura na ZapSign, acesse a aba "Clientes", edite o cadastro e preencha o e-mail.`,
+        'E-mail Obrigatório',
+      )
+      return
+    }
+
     try {
       setSendingId(proposal.id)
       const res = await enviarParaAssinatura(proposal.id)
@@ -236,7 +247,7 @@ export const PropostasSection: React.FC = () => {
         })
       }
     } catch (_) {
-      // Erro já exibido pelo toast do context
+      // Erro detalhado já é exibido pelo toast do CRMContext
     } finally {
       setSendingId(null)
     }

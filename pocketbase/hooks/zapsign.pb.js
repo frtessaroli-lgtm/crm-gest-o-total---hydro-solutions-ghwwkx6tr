@@ -98,6 +98,31 @@ routerAdd(
       itens = []
     }
 
+    // Funções auxiliares seguras para Goja (o engine JS do PocketBase não suporta toLocaleString com locale/opções)
+    const formatMoney = (val) => {
+      const num = Number(val || 0)
+      const fixed = num.toFixed(2)
+      const parts = fixed.split('.')
+      const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+      return `${intPart},${parts[1]}`
+    }
+
+    const formatDateBR = (d) => {
+      const date = d instanceof Date ? d : new Date()
+      const day = String(date.getDate()).padStart(2, '0')
+      const month = String(date.getMonth() + 1).padStart(2, '0')
+      const year = date.getFullYear()
+      return `${day}/${month}/${year}`
+    }
+
+    // Validação de dados do signatário (exigência da ZapSign: nome e e-mail válidos)
+    if (!clienteEmail || clienteEmail.trim() === '') {
+      return c.json(400, {
+        message: `O cliente "${clienteNome}" não possui e-mail cadastrado. Para enviar para assinatura via ZapSign, preencha o e-mail no cadastro do cliente na aba Clientes.`,
+        code: 'MISSING_CLIENT_EMAIL',
+      })
+    }
+
     // Monta texto em Markdown profissional para o documento na ZapSign
     let itensMarkdown = ''
     if (Array.isArray(itens) && itens.length > 0) {
@@ -105,27 +130,21 @@ routerAdd(
         .map((it, idx) => {
           const desc = it.description || `Item ${idx + 1}`
           const qtd = it.quantity || 1
-          const unit = Number(it.unitPrice || 0).toLocaleString('pt-BR', {
-            minimumFractionDigits: 2,
-          })
-          const tot = Number(it.total || 0).toLocaleString('pt-BR', {
-            minimumFractionDigits: 2,
-          })
+          const unit = formatMoney(it.unitPrice || 0)
+          const tot = formatMoney(it.total || 0)
           return `| ${idx + 1} | ${desc} | ${qtd} | R$ ${unit} | R$ ${tot} |`
         })
         .join('\n')
     } else {
-      itensMarkdown = `| 1 | ${proposalTitle} | 1 | R$ ${proposalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} | R$ ${proposalValor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} |`
+      const valorStr = formatMoney(proposalValor)
+      itensMarkdown = `| 1 | ${proposalTitle} | 1 | R$ ${valorStr} | R$ ${valorStr} |`
     }
 
-    const valorFormatado = proposalValor.toLocaleString('pt-BR', {
-      style: 'currency',
-      currency: 'BRL',
-    })
+    const valorFormatado = `R$ ${formatMoney(proposalValor)}`
 
     const markdownDocument = `# PROPOSTA COMERCIAL DE PRESTAÇÃO DE SERVIÇOS
 **Referência:** ${proposalCode}  
-**Data:** ${new Date().toLocaleDateString('pt-BR')}  
+**Data:** ${formatDateBR(new Date())}  
 ${proposalValidade ? `**Validade:** ${proposalValidade}\n` : ''}
 
 ---
@@ -166,13 +185,20 @@ As partes declaram ciência e pleno acordo com as especificações, valores e co
 `
 
     // Prepara signatários
+    const cleanEmail = clienteEmail.trim()
     const signer = {
-      name: clienteNome,
+      name: clienteNome || 'Signatário',
+      email: cleanEmail,
+      lock_email: false,
+      lock_name: false,
     }
 
-    if (clienteEmail && clienteEmail.trim() !== '') {
-      signer.email = clienteEmail.trim()
-      signer.lock_email = false
+    if (clienteTel && clienteTel.trim() !== '') {
+      const cleanPhone = clienteTel.replace(/\D/g, '')
+      if (cleanPhone.length >= 10) {
+        signer.phone_country = '55'
+        signer.phone_number = cleanPhone
+      }
     }
 
     const payloadZapSign = {
@@ -206,26 +232,59 @@ As partes declaram ciência e pleno acordo com as especificações, valores e co
 
     if (!zapsignResponse || zapsignResponse.statusCode < 200 || zapsignResponse.statusCode >= 300) {
       let detalhe = ''
+      let parsedError = null
       try {
         if (zapsignResponse && zapsignResponse.json) {
+          parsedError = zapsignResponse.json
           detalhe = JSON.stringify(zapsignResponse.json)
         } else if (zapsignResponse && zapsignResponse.raw) {
           detalhe = zapsignResponse.raw
+          try {
+            parsedError = JSON.parse(zapsignResponse.raw)
+          } catch (_) {}
         }
       } catch (_) {}
 
-      console.error(`ZapSign retornou status ${zapsignResponse?.statusCode}:`, detalhe)
+      console.error(`ZapSign API retornou erro HTTP ${zapsignResponse?.statusCode}: ${detalhe}`)
 
-      // Mensagens de erro amigáveis
+      // Mensagens de erro amigáveis e detalhadas
       if (zapsignResponse?.statusCode === 401 || zapsignResponse?.statusCode === 403) {
         return c.json(400, {
           message:
-            'Token da ZapSign inválido ou não autorizado. Verifique a credencial ZAPSIGN_API_TOKEN cadastrada.',
+            'Token da ZapSign inválido ou não autorizado (HTTP ' +
+            zapsignResponse.statusCode +
+            '). Verifique a credencial ZAPSIGN_API_TOKEN cadastrada no painel da Skip Cloud.',
+          details: detalhe,
         })
       }
 
+      // Extrai mensagem específica de erro da ZapSign quando disponível
+      let specificMsg = ''
+      if (parsedError) {
+        if (typeof parsedError === 'string') {
+          specificMsg = parsedError
+        } else if (parsedError.detail) {
+          specificMsg = parsedError.detail
+        } else if (parsedError.message) {
+          specificMsg = parsedError.message
+        } else if (parsedError.error) {
+          specificMsg =
+            typeof parsedError.error === 'string'
+              ? parsedError.error
+              : JSON.stringify(parsedError.error)
+        } else if (parsedError.signers) {
+          specificMsg = `Dados do signatário inválidos: ${JSON.stringify(parsedError.signers)}`
+        } else if (parsedError.name) {
+          specificMsg = `Nome do documento inválido: ${JSON.stringify(parsedError.name)}`
+        }
+      }
+
+      const finalMsg = specificMsg
+        ? `A ZapSign recusou o documento: ${specificMsg}`
+        : `A ZapSign retornou um erro ao criar o documento (HTTP ${zapsignResponse?.statusCode || 'falha'}). Verifique os dados da proposta e do cliente.`
+
       return c.json(400, {
-        message: `A ZapSign retornou um erro ao criar o documento (${zapsignResponse?.statusCode || 'falha'}). Verifique os dados da proposta e do cliente.`,
+        message: finalMsg,
         details: detalhe,
       })
     }

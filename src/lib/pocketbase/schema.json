@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-21T17:42:47.140Z",
+  "generatedAt": "2026-10-21T18:31:30.183Z",
   "collections": [
     {
       "name": "users",
@@ -265,6 +265,12 @@
           "required": false,
           "system": false,
           "autodateTriggers": ["onCreate", "onUpdate"]
+        },
+        {
+          "name": "ZAPSIGN_API_TOKEN",
+          "type": "password",
+          "required": false,
+          "system": false
         }
       ],
       "indexes": [

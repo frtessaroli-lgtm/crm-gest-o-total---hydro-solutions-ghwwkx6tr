@@ -353,12 +353,23 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         DataStore.fetchAll().catch(() => {})
         return { signatureUrl, docToken }
       } catch (err: any) {
-        const errorMsg =
+        // Extrai a mensagem mais específica possível retornada pelo backend ou pela ZapSign
+        const specificMsg =
           err?.response?.message ||
           err?.data?.message ||
+          err?.originalError?.data?.message ||
+          err?.response?.data?.message ||
           err?.message ||
-          'Erro ao enviar proposta para assinatura via ZapSign.'
-        addToast('error', errorMsg, 'Falha no Envio')
+          'Não foi possível concluir o envio da proposta para assinatura.'
+
+        const errorDetails = err?.response?.details || err?.data?.details || ''
+        const fullMessage =
+          errorDetails && errorDetails !== specificMsg
+            ? `${specificMsg} (${typeof errorDetails === 'string' ? errorDetails : JSON.stringify(errorDetails)})`
+            : specificMsg
+
+        console.error('Falha ao enviar proposta para assinatura via ZapSign:', err)
+        addToast('error', fullMessage, 'Assinatura ZapSign')
         throw err
       }
     },

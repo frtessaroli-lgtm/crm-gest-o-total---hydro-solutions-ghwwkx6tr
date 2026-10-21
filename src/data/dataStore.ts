@@ -10,6 +10,7 @@ import {
   UserProfile,
 } from '../types/crm'
 import { INITIAL_DATA } from './seed'
+import { generateDigitableLine, calculateDaysOverdue } from '../utils/formatters'
 
 const STORAGE_KEY = 'nexocrm_data_v1'
 
@@ -47,6 +48,46 @@ class DataStoreService {
               multifoco_client_id: c.multifoco_client_id || undefined,
             }
           })
+
+          // Migração retrocompatível de cobranças:
+          // Status legados ('em_aberto' -> 'Emitido', 'pago' -> 'Pago', 'em_atraso' -> 'Vencido', 'cancelado' -> 'Cancelado')
+          // Auto-vencimento: se status for Emitido (ou em_aberto) e vencimento anterior a hoje, vira 'Vencido'
+          // Garantir digitableLine e competence
+          parsed.charges = parsed.charges.map((c) => {
+            let normalizedStatus = c.status
+            if (normalizedStatus === 'em_aberto') normalizedStatus = 'Emitido'
+            else if (normalizedStatus === 'pago') normalizedStatus = 'Pago'
+            else if (normalizedStatus === 'em_atraso') normalizedStatus = 'Vencido'
+            else if (normalizedStatus === 'cancelado') normalizedStatus = 'Cancelado'
+
+            // Vencimento automático: se Emitido e vencimento anterior a hoje, vira Vencido
+            if (normalizedStatus === 'Emitido' && c.dueDate) {
+              const daysOver = calculateDaysOverdue(c.dueDate)
+              if (daysOver > 0) {
+                normalizedStatus = 'Vencido'
+              }
+            }
+
+            // Competência fallback a partir do dueDate ou createdAt
+            let competence = c.competence
+            if (!competence) {
+              const dateRef = c.dueDate || c.createdAt || new Date().toISOString()
+              const parts = dateRef.split('T')[0].split('-')
+              if (parts.length >= 2) {
+                competence = `${parts[1]}/${parts[0]}`
+              } else {
+                competence = '03/2025'
+              }
+            }
+
+            return {
+              ...c,
+              status: normalizedStatus,
+              competence,
+              digitableLine: c.digitableLine || generateDigitableLine(),
+            }
+          })
+
           if (parsed.companySettings) {
             parsed.companySettings.multiFocoBaseUrl =
               parsed.companySettings.multiFocoBaseUrl || 'https://api.multifoco.com.br'
@@ -437,6 +478,34 @@ class DataStoreService {
     return this.data.charges.find((c) => c.id === id)
   }
 
+  /**
+   * Verifica cobranças com status 'Emitido' (ou 'em_aberto') e data de vencimento anterior a hoje,
+   * atualizando-as para 'Vencido'. Não rebaixa cobranças 'Pago'.
+   */
+  public checkAndExpireCharges(): number {
+    let changed = 0
+    this.data.charges.forEach((c) => {
+      const isIssued = c.status === 'Emitido' || c.status === 'em_aberto'
+      if (isIssued && c.dueDate) {
+        const daysOver = calculateDaysOverdue(c.dueDate)
+        if (daysOver > 0) {
+          c.status = 'Vencido'
+          changed++
+        }
+      }
+    })
+    if (changed > 0) {
+      this.commit({
+        type: 'cobranca',
+        action: 'Atualização automática de vencimento',
+        title: `${changed} cobrança(s) expirada(s) marcadas como Vencido`,
+        entityId: 'auto-expire',
+        status: 'Vencido',
+      })
+    }
+    return changed
+  }
+
   public saveCharge(
     charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
   ): Charge {
@@ -446,10 +515,12 @@ class DataStoreService {
     if (charge.id) {
       const idx = this.data.charges.findIndex((c) => c.id === charge.id)
       if (idx >= 0) {
+        const existing = this.data.charges[idx]
         const updated: Charge = {
-          ...this.data.charges[idx],
+          ...existing,
           ...charge,
           clientName,
+          digitableLine: charge.digitableLine || existing.digitableLine || generateDigitableLine(),
         }
         this.data.charges[idx] = updated
         this.commit({
@@ -465,12 +536,14 @@ class DataStoreService {
 
     const count = 1096 + this.data.charges.length
     const code = `COB-${count}`
-    const newId = 'cob-' + Date.now()
+    const newId = 'cob-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5)
     const created: Charge = {
       ...charge,
       id: newId,
       code,
       clientName,
+      status: charge.status || 'Emitido',
+      digitableLine: charge.digitableLine || generateDigitableLine(),
       method: 'boleto',
       createdAt: new Date().toISOString(),
     }
@@ -488,27 +561,27 @@ class DataStoreService {
   public registerPayment(id: string): void {
     const c = this.data.charges.find((item) => item.id === id)
     if (!c) return
-    c.status = 'pago'
+    c.status = 'Pago'
     c.paymentDate = new Date().toISOString().split('T')[0]
     this.commit({
       type: 'cobranca',
       action: 'Pagamento de boleto compensado',
       title: `Boleto ${c.code} liquidado por ${c.clientName}`,
       entityId: c.id,
-      status: 'pago',
+      status: 'Pago',
     })
   }
 
   public cancelCharge(id: string): void {
     const c = this.data.charges.find((item) => item.id === id)
     if (!c) return
-    c.status = 'cancelado'
+    c.status = 'Cancelado'
     this.commit({
       type: 'cobranca',
       action: 'Boleto cancelado',
       title: `Boleto ${c.code} (${c.clientName}) foi cancelado`,
       entityId: c.id,
-      status: 'cancelado',
+      status: 'Cancelado',
     })
   }
 

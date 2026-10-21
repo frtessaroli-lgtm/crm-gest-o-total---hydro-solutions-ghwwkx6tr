@@ -69,6 +69,7 @@ interface CRMContextType {
   saveCharge: (
     charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
   ) => Charge
+  checkAndExpireCharges: () => number
   registerPayment: (id: string) => void
   cancelCharge: (id: string) => void
   saveCompanySettings: (settings: CompanySettings) => void
@@ -247,11 +248,15 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
     ) => {
       const res = DataStore.saveCharge(charge)
-      addToast('success', `Boleto ${res.code} criado com sucesso!`)
+      addToast('success', `Cobrança ${res.code} criada com sucesso!`)
       return res
     },
     [addToast],
   )
+
+  const checkAndExpireCharges = useCallback(() => {
+    return DataStore.checkAndExpireCharges()
+  }, [])
 
   const registerPayment = useCallback(
     (id: string) => {
@@ -323,6 +328,7 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     saveInvoice,
     updateInvoiceStatus,
     saveCharge,
+    checkAndExpireCharges,
     registerPayment,
     cancelCharge,
     saveCompanySettings,

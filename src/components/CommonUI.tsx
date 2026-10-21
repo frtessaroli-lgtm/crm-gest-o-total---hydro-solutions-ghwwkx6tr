@@ -140,29 +140,39 @@ export const StatusBadge: React.FC<{
     }
   } else if (type === 'charge') {
     switch (status) {
+      case 'Emitido':
       case 'em_aberto':
-        label = 'Em aberto'
-        bg = 'bg-[#E0A100]/15'
-        text = 'text-[#B88300]'
-        dot = 'bg-[#E0A100]'
+        label = 'Emitido'
+        bg = 'bg-[#0F4C5C]/10'
+        text = 'text-[#0F4C5C]'
+        dot = 'bg-[#0F4C5C]'
         break
+      case 'Pago':
       case 'pago':
         label = 'Pago'
         bg = 'bg-[#2E9E6B]/10'
         text = 'text-[#2E9E6B]'
         dot = 'bg-[#2E9E6B]'
         break
+      case 'Vencido':
       case 'em_atraso':
-        label = 'Em atraso'
+        label = 'Vencido'
         bg = 'bg-[#C0392B]/15'
         text = 'text-[#C0392B]'
         dot = 'bg-[#C0392B]'
         break
+      case 'Cancelado':
       case 'cancelado':
         label = 'Cancelado'
         bg = 'bg-[#E2E8F0]'
         text = 'text-[#5A6B7B]'
         dot = 'bg-[#5A6B7B]'
+        break
+      default:
+        label = status
+        bg = 'bg-slate-100'
+        text = 'text-slate-700'
+        dot = 'bg-slate-500'
         break
     }
   }

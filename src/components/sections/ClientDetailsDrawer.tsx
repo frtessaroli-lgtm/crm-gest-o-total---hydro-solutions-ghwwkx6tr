@@ -53,9 +53,14 @@ export const ClientDetailsDrawer: React.FC<ClientDetailsDrawerProps> = ({
   let totalPaid = 0
   let totalOpen = 0
   clientCharges.forEach((c) => {
-    if (c.status === 'pago') {
+    if (c.status === 'Pago' || c.status === 'pago') {
       totalPaid += c.value
-    } else if (c.status === 'em_aberto' || c.status === 'em_atraso') {
+    } else if (
+      c.status === 'Emitido' ||
+      c.status === 'em_aberto' ||
+      c.status === 'Vencido' ||
+      c.status === 'em_atraso'
+    ) {
       totalOpen += c.value
     }
   })

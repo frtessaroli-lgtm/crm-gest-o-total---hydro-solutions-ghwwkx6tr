@@ -188,3 +188,71 @@ export const formatNextChargeDate = (dueDay?: number): string => {
     year: 'numeric',
   }).format(nextDate)
 }
+
+/**
+ * Gera uma linha digitável de boleto bancário fictícia com 47 dígitos e aplica a formatação padrão:
+ * XXXXX.XXXXX XXXXX.XXXXXX XXXXX.XXXXXX X XXXXXXXXXXXXXX
+ */
+export const generateDigitableLine = (): string => {
+  // Gera 47 dígitos numéricos
+  let digits = ''
+  for (let i = 0; i < 47; i++) {
+    digits += Math.floor(Math.random() * 10).toString()
+  }
+  return formatDigitableLine(digits)
+}
+
+/**
+ * Formata 47 dígitos como linha digitável padrão de boleto
+ */
+export const formatDigitableLine = (raw: string): string => {
+  const digits = raw.replace(/\D/g, '').padEnd(47, '0').slice(0, 47)
+  const p1 = digits.slice(0, 5) + '.' + digits.slice(5, 10)
+  const p2 = digits.slice(10, 15) + '.' + digits.slice(15, 21)
+  const p3 = digits.slice(21, 26) + '.' + digits.slice(26, 32)
+  const p4 = digits.slice(32, 33)
+  const p5 = digits.slice(33, 47)
+  return `${p1} ${p2} ${p3} ${p4} ${p5}`
+}
+
+/**
+ * Mascara a linha digitável para exibição limpa em tabelas:
+ * Ex: 34191.79001 ... 91000
+ */
+export const maskDigitableLine = (formattedLine?: string): string => {
+  if (!formattedLine) return '—'
+  const clean = formattedLine.trim()
+  if (clean.length < 20) return clean
+  const start = clean.slice(0, 11)
+  const end = clean.slice(-8)
+  return `${start} ••• ${end}`
+}
+
+/**
+ * Formata mês e ano para competência amigável: "03/2025" -> "Março/2025" ou mantém legível
+ */
+export const formatCompetence = (competenceStr?: string): string => {
+  if (!competenceStr) return '—'
+  if (competenceStr.includes('/')) {
+    const [month, year] = competenceStr.split('/')
+    const monthNum = parseInt(month, 10)
+    if (!isNaN(monthNum) && monthNum >= 1 && monthNum <= 12) {
+      const monthNames = [
+        'Janeiro',
+        'Fevereiro',
+        'Março',
+        'Abril',
+        'Maio',
+        'Junho',
+        'Julho',
+        'Agosto',
+        'Setembro',
+        'Outubro',
+        'Novembro',
+        'Dezembro',
+      ]
+      return `${monthNames[monthNum - 1]}/${year}`
+    }
+  }
+  return competenceStr
+}

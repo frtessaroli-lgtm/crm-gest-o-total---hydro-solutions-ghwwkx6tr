@@ -29,7 +29,7 @@ export const DashboardSection: React.FC = () => {
   // 1. Cálculos de Indicadores
   // Faturamento no mês: soma de cobranças pagas ou faturadas no mês atual
   const totalFaturamentoMes = charges
-    .filter((c) => c.status === 'pago')
+    .filter((c) => c.status === 'Pago' || c.status === 'pago')
     .reduce((acc, c) => acc + c.value, 0)
 
   const propostasAbertas = proposals.filter(
@@ -40,9 +40,11 @@ export const DashboardSection: React.FC = () => {
     (os) => os.status === 'em_andamento' || os.status === 'aberta',
   ).length
 
-  const cobrancasEmAtraso = charges.filter((c) => c.status === 'em_atraso').length
+  const cobrancasEmAtraso = charges.filter(
+    (c) => c.status === 'Vencido' || c.status === 'em_atraso',
+  ).length
   const valorTotalAtraso = charges
-    .filter((c) => c.status === 'em_atraso')
+    .filter((c) => c.status === 'Vencido' || c.status === 'em_atraso')
     .reduce((acc, c) => acc + c.value, 0)
 
   // 2. Gráfico dos últimos 6 meses (Simulação analítica consistente baseada nas OS e faturas)
@@ -286,9 +288,14 @@ export const DashboardSection: React.FC = () => {
             <div className="space-y-4">
               {activities.slice(0, 5).map((act) => {
                 let badgeColor = 'bg-[#0F4C5C]/10 text-[#0F4C5C]'
-                if (act.type === 'cobranca' && act.status === 'pago') {
+                if (act.type === 'cobranca' && (act.status === 'Pago' || act.status === 'pago')) {
                   badgeColor = 'bg-[#2E9E6B]/10 text-[#2E9E6B]'
-                } else if (act.status === 'em_atraso' || act.status === 'cancelado') {
+                } else if (
+                  act.status === 'Vencido' ||
+                  act.status === 'em_atraso' ||
+                  act.status === 'Cancelado' ||
+                  act.status === 'cancelado'
+                ) {
                   badgeColor = 'bg-[#C0392B]/10 text-[#C0392B]'
                 } else if (act.status === 'aceita' || act.status === 'concluida') {
                   badgeColor = 'bg-[#2E9E6B]/10 text-[#2E9E6B]'

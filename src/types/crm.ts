@@ -89,7 +89,15 @@ export interface Invoice {
   notes?: string
 }
 
-export type ChargeStatus = 'em_aberto' | 'pago' | 'em_atraso' | 'cancelado'
+export type ChargeStatus =
+  | 'Emitido'
+  | 'Pago'
+  | 'Vencido'
+  | 'Cancelado'
+  | 'em_aberto'
+  | 'pago'
+  | 'em_atraso'
+  | 'cancelado'
 
 export interface Charge {
   id: string
@@ -97,10 +105,12 @@ export interface Charge {
   clientId: string
   clientName: string
   description: string
+  competence?: string // ex: "03/2025" ou "Março/2025"
   value: number
   dueDate: string // AAAA-MM-DD
   paymentDate?: string
   status: ChargeStatus
+  digitableLine?: string // Linha digitável de 47 dígitos fictícia formatada
   method: 'boleto'
   createdAt: string
 }

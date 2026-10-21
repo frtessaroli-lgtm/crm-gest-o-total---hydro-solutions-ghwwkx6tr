@@ -338,9 +338,12 @@ export const ConfiguracoesSection: React.FC = () => {
             <Database className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-[#1A202C]">Gestão de Dados Locais</h3>
+            <h3 className="text-base font-semibold text-[#1A202C]">
+              Banco de Dados em Nuvem (PocketBase)
+            </h3>
             <p className="text-xs text-[#5A6B7B]">
-              Camada de dados simulada em JavaScript (localStorage) pronta para futura conexão a API
+              Camada de dados conectada ao Skip Cloud (PocketBase) com autenticação e tempo real via
+              SSE
             </p>
           </div>
         </div>
@@ -370,21 +373,21 @@ export const ConfiguracoesSection: React.FC = () => {
           <div className="p-4 rounded-xl border border-[#E2E8F0] bg-[#F7F8FA] flex flex-col justify-between space-y-4">
             <div>
               <div className="flex items-center gap-2 font-semibold text-sm text-[#1A202C] mb-1">
-                <RotateCcw className="w-4 h-4 text-[#C0392B]" />
-                <span>Restaurar Dados de Exemplo</span>
+                <RotateCcw className="w-4 h-4 text-[#0F4C5C]" />
+                <span>Sincronizar Banco em Nuvem</span>
               </div>
               <p className="text-xs text-[#5A6B7B]">
-                Restaura o banco inicial com os 6 clientes, 9 propostas, ordens de serviço e boletos
-                predefinidos.
+                Força nova sincronização completa de clientes, propostas, ordens, notas e cobranças
+                com o PocketBase.
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setIsResetModalOpen(true)}
-              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-red-50 border border-red-200 rounded-lg text-xs font-semibold text-[#C0392B] transition-all shadow-sm"
+              onClick={() => resetToSampleData()}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-[#0F4C5C]/5 border border-[#0F4C5C]/30 rounded-lg text-xs font-semibold text-[#0F4C5C] transition-all shadow-sm cursor-pointer"
             >
               <RotateCcw className="w-4 h-4" />
-              <span>Restaurar Base de Seed</span>
+              <span>Sincronizar com PocketBase</span>
             </button>
           </div>
         </div>

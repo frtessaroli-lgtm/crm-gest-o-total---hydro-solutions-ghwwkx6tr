@@ -11,6 +11,7 @@ import {
   SectionId,
 } from '../types/crm'
 import { DataStore } from '../data/dataStore'
+import pb from '@/lib/pocketbase/client'
 
 interface ToastItem {
   id: string
@@ -20,6 +21,15 @@ interface ToastItem {
 }
 
 interface CRMContextType {
+  // Auth
+  isAuthenticated: boolean
+  currentUser: any | null
+  logout: () => void
+  refreshData: () => Promise<void>
+  isDataLoading: boolean
+  isDataLoaded: boolean
+  dataError: string | null
+
   // Navigation & Search
   activeSection: SectionId
   setActiveSection: (section: SectionId) => void
@@ -50,31 +60,31 @@ interface CRMContextType {
   removeToast: (id: string) => void
 
   // Mutators
-  saveClient: (client: Omit<Client, 'id' | 'createdAt'> & { id?: string }) => Client
-  deleteClient: (id: string) => void
+  saveClient: (client: Omit<Client, 'id' | 'createdAt'> & { id?: string }) => Promise<Client>
+  deleteClient: (id: string) => Promise<void>
   saveProposal: (
     proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
-  ) => Proposal
-  updateProposalStatus: (id: string, status: Proposal['status']) => void
-  deleteProposal: (id: string) => void
+  ) => Promise<Proposal>
+  updateProposalStatus: (id: string, status: Proposal['status']) => Promise<void>
+  deleteProposal: (id: string) => Promise<void>
   saveServiceOrder: (
     os: Omit<ServiceOrder, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
-  ) => ServiceOrder
-  completeServiceOrder: (id: string) => void
-  updateServiceOrderStatus: (id: string, status: ServiceOrder['status']) => void
+  ) => Promise<ServiceOrder>
+  completeServiceOrder: (id: string) => Promise<void>
+  updateServiceOrderStatus: (id: string, status: ServiceOrder['status']) => Promise<void>
   saveInvoice: (
     invoice: Omit<Invoice, 'id' | 'number' | 'createdAt'> & { id?: string; number?: string },
-  ) => Invoice
-  updateInvoiceStatus: (id: string, status: Invoice['status']) => void
+  ) => Promise<Invoice>
+  updateInvoiceStatus: (id: string, status: Invoice['status']) => Promise<void>
   saveCharge: (
     charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
-  ) => Charge
-  checkAndExpireCharges: () => number
-  registerPayment: (id: string) => void
-  cancelCharge: (id: string) => void
+  ) => Promise<Charge>
+  checkAndExpireCharges: () => Promise<number>
+  registerPayment: (id: string) => Promise<void>
+  cancelCharge: (id: string) => Promise<void>
   saveCompanySettings: (settings: CompanySettings) => void
-  saveUserProfile: (profile: UserProfile) => void
-  resetToSampleData: () => void
+  saveUserProfile: (profile: UserProfile) => Promise<void>
+  resetToSampleData: () => Promise<void>
   exportDataJSON: () => string
 }
 
@@ -105,15 +115,77 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }>({ type: null })
   const [toasts, setToasts] = useState<ToastItem[]>([])
 
-  // Dados reativos do DataStore
+  // Auth state
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => pb.authStore.isValid)
+  const [currentUser, setCurrentUser] = useState<any>(() => pb.authStore.record)
+
+  // Status de carregamento reativo do DataStore
+  const [storeStatus, setStoreStatus] = useState(() => DataStore.getStatus())
   const [, setRevision] = useState(0)
 
   useEffect(() => {
-    const unsubscribe = DataStore.subscribe(() => {
-      setRevision((r) => r + 1)
+    const unsubPb = pb.authStore.onChange((token, record) => {
+      const valid = pb.authStore.isValid
+      setIsAuthenticated(valid)
+      setCurrentUser(record)
+      if (valid) {
+        DataStore.fetchAll().catch((e) => console.error(e))
+      }
     })
-    return unsubscribe
+
+    const unsubData = DataStore.subscribe(() => {
+      setRevision((r) => r + 1)
+      setStoreStatus(DataStore.getStatus())
+    })
+
+    if (pb.authStore.isValid && !DataStore.getStatus().isLoaded) {
+      DataStore.fetchAll().catch((e) => console.error(e))
+    }
+
+    return () => {
+      unsubPb()
+      unsubData()
+    }
   }, [])
+
+  // Inscrições SSE de Tempo Real no PocketBase
+  useEffect(() => {
+    if (!isAuthenticated) return
+
+    const collections = ['clientes', 'cobrancas', 'propostas', 'ordens_servico', 'notas_fiscais']
+    let cancelled = false
+    const unsubscribes: (() => void)[] = []
+
+    collections.forEach((col) => {
+      pb.collection(col)
+        .subscribe('*', (e) => {
+          if (!cancelled) {
+            DataStore.handleRealtimeEvent(col, e.action, e.record)
+          }
+        })
+        .then((unsub) => {
+          if (cancelled) {
+            unsub()
+          } else {
+            unsubscribes.push(unsub)
+          }
+        })
+        .catch((err) => {
+          console.warn(`Realtime subscription error for ${col}:`, err)
+        })
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribes.forEach((unsub) => {
+        try {
+          unsub()
+        } catch {
+          /* intentionally ignored */
+        }
+      })
+    }
+  }, [isAuthenticated])
 
   // Hash router sync
   useEffect(() => {
@@ -145,6 +217,23 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setToasts((current) => current.filter((t) => t.id !== id))
   }, [])
 
+  const logout = useCallback(() => {
+    pb.authStore.clear()
+    setIsAuthenticated(false)
+    setCurrentUser(null)
+    DataStore.clearData()
+    addToast('info', 'Sessão encerrada com sucesso.', 'Logout')
+  }, [addToast])
+
+  const refreshData = useCallback(async () => {
+    try {
+      await DataStore.fetchAll()
+      addToast('success', 'Dados sincronizados com o banco de dados!', 'Atualizado')
+    } catch (err: any) {
+      addToast('error', err?.message || 'Falha ao sincronizar dados.', 'Erro de Conexão')
+    }
+  }, [addToast])
+
   // Snapshots
   const clients = useMemo(() => DataStore.getClients(), [DataStore.getDataSnapshot()])
   const proposals = useMemo(() => DataStore.getProposals(), [DataStore.getDataSnapshot()])
@@ -160,116 +249,180 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Mutators com feedback
   const saveClient = useCallback(
-    (client: Omit<Client, 'id' | 'createdAt'> & { id?: string }) => {
-      const res = DataStore.saveClient(client)
-      addToast('success', `Cliente ${res.name} gravado com sucesso!`)
-      return res
+    async (client: Omit<Client, 'id' | 'createdAt'> & { id?: string }) => {
+      try {
+        const res = await DataStore.saveClient(client)
+        addToast('success', `Cliente ${res.name} gravado com sucesso!`)
+        return res
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao gravar cliente.', 'Falha')
+        throw err
+      }
     },
     [addToast],
   )
 
   const deleteClient = useCallback(
-    (id: string) => {
-      DataStore.deleteClient(id)
-      addToast('info', 'Cliente removido com sucesso.')
+    async (id: string) => {
+      try {
+        await DataStore.deleteClient(id)
+        addToast('info', 'Cliente removido com sucesso.')
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao remover cliente.', 'Falha')
+        throw err
+      }
     },
     [addToast],
   )
 
   const saveProposal = useCallback(
-    (proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string }) => {
-      const res = DataStore.saveProposal(proposal)
-      addToast('success', `Proposta ${res.code} salva com sucesso!`)
-      return res
+    async (
+      proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
+    ) => {
+      try {
+        const res = await DataStore.saveProposal(proposal)
+        addToast('success', `Proposta ${res.code} salva com sucesso!`)
+        return res
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao salvar proposta.', 'Falha')
+        throw err
+      }
     },
     [addToast],
   )
 
   const updateProposalStatus = useCallback(
-    (id: string, status: Proposal['status']) => {
-      DataStore.updateProposalStatus(id, status)
-      addToast('info', `Status da proposta alterado para ${status.toUpperCase()}`)
+    async (id: string, status: Proposal['status']) => {
+      try {
+        await DataStore.updateProposalStatus(id, status)
+        addToast('info', `Status da proposta alterado para ${status.toUpperCase()}`)
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao atualizar status.', 'Falha')
+      }
     },
     [addToast],
   )
 
   const deleteProposal = useCallback(
-    (id: string) => {
-      DataStore.deleteProposal(id)
-      addToast('info', 'Proposta excluída.')
+    async (id: string) => {
+      try {
+        await DataStore.deleteProposal(id)
+        addToast('info', 'Proposta excluída com sucesso.')
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao excluir proposta.', 'Falha')
+      }
     },
     [addToast],
   )
 
   const saveServiceOrder = useCallback(
-    (os: Omit<ServiceOrder, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string }) => {
-      const res = DataStore.saveServiceOrder(os)
-      addToast('success', `Ordem de Serviço ${res.code} gravada com sucesso!`)
-      return res
+    async (
+      os: Omit<ServiceOrder, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
+    ) => {
+      try {
+        const res = await DataStore.saveServiceOrder(os)
+        addToast('success', `Ordem de Serviço ${res.code} gravada com sucesso!`)
+        return res
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao salvar OS.', 'Falha')
+        throw err
+      }
     },
     [addToast],
   )
 
   const completeServiceOrder = useCallback(
-    (id: string) => {
-      DataStore.completeServiceOrder(id)
-      addToast('success', 'Ordem de serviço marcada como CONCLUÍDA!')
+    async (id: string) => {
+      try {
+        await DataStore.completeServiceOrder(id)
+        addToast('success', 'Ordem de serviço marcada como CONCLUÍDA!')
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao concluir OS.', 'Falha')
+      }
     },
     [addToast],
   )
 
   const updateServiceOrderStatus = useCallback(
-    (id: string, status: ServiceOrder['status']) => {
-      DataStore.updateServiceOrderStatus(id, status)
-      addToast('info', `Status da OS atualizado para ${status.replace('_', ' ').toUpperCase()}`)
+    async (id: string, status: ServiceOrder['status']) => {
+      try {
+        await DataStore.updateServiceOrderStatus(id, status)
+        addToast('info', `Status da OS atualizado para ${status.replace('_', ' ').toUpperCase()}`)
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao atualizar OS.', 'Falha')
+      }
     },
     [addToast],
   )
 
   const saveInvoice = useCallback(
-    (invoice: Omit<Invoice, 'id' | 'number' | 'createdAt'> & { id?: string; number?: string }) => {
-      const res = DataStore.saveInvoice(invoice)
-      addToast('success', `Nota Fiscal ${res.number} emitida com sucesso!`)
-      return res
+    async (
+      invoice: Omit<Invoice, 'id' | 'number' | 'createdAt'> & { id?: string; number?: string },
+    ) => {
+      try {
+        const res = await DataStore.saveInvoice(invoice)
+        addToast('success', `Nota Fiscal ${res.number} emitida com sucesso!`)
+        return res
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao emitir nota fiscal.', 'Falha')
+        throw err
+      }
     },
     [addToast],
   )
 
   const updateInvoiceStatus = useCallback(
-    (id: string, status: Invoice['status']) => {
-      DataStore.updateInvoiceStatus(id, status)
-      addToast('success', `Nota Fiscal atualizada para status ${status.toUpperCase()}!`)
+    async (id: string, status: Invoice['status']) => {
+      try {
+        await DataStore.updateInvoiceStatus(id, status)
+        addToast('success', `Nota Fiscal atualizada para status ${status.toUpperCase()}!`)
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao atualizar status da nota.', 'Falha')
+      }
     },
     [addToast],
   )
 
   const saveCharge = useCallback(
-    (
+    async (
       charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
     ) => {
-      const res = DataStore.saveCharge(charge)
-      addToast('success', `Cobrança ${res.code} criada com sucesso!`)
-      return res
+      try {
+        const res = await DataStore.saveCharge(charge)
+        addToast('success', `Cobrança ${res.code} criada com sucesso!`)
+        return res
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao salvar cobrança.', 'Falha')
+        throw err
+      }
     },
     [addToast],
   )
 
-  const checkAndExpireCharges = useCallback(() => {
+  const checkAndExpireCharges = useCallback(async () => {
     return DataStore.checkAndExpireCharges()
   }, [])
 
   const registerPayment = useCallback(
-    (id: string) => {
-      DataStore.registerPayment(id)
-      addToast('success', 'Pagamento recebido e registrado com sucesso!')
+    async (id: string) => {
+      try {
+        await DataStore.registerPayment(id)
+        addToast('success', 'Pagamento recebido e registrado com sucesso!')
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao registrar pagamento.', 'Falha')
+      }
     },
     [addToast],
   )
 
   const cancelCharge = useCallback(
-    (id: string) => {
-      DataStore.cancelCharge(id)
-      addToast('info', 'Cobrança cancelada.')
+    async (id: string) => {
+      try {
+        await DataStore.cancelCharge(id)
+        addToast('info', 'Cobrança cancelada.')
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao cancelar cobrança.', 'Falha')
+      }
     },
     [addToast],
   )
@@ -283,16 +436,24 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   )
 
   const saveUserProfile = useCallback(
-    (profile: UserProfile) => {
-      DataStore.saveUserProfile(profile)
-      addToast('success', 'Perfil de usuário atualizado com sucesso!')
+    async (profile: UserProfile) => {
+      try {
+        await DataStore.saveUserProfile(profile)
+        addToast('success', 'Perfil de usuário atualizado com sucesso!')
+      } catch (err: any) {
+        addToast('error', err?.message || 'Erro ao atualizar perfil.', 'Falha')
+      }
     },
     [addToast],
   )
 
-  const resetToSampleData = useCallback(() => {
-    DataStore.resetToSampleData()
-    addToast('info', 'Dados de exemplo restaurados com sucesso!')
+  const resetToSampleData = useCallback(async () => {
+    try {
+      await DataStore.resetToSampleData()
+      addToast('info', 'Dados sincronizados do banco de dados PocketBase!')
+    } catch (err: any) {
+      addToast('error', err?.message || 'Erro ao restaurar dados.')
+    }
   }, [addToast])
 
   const exportDataJSON = useCallback(() => {
@@ -300,6 +461,13 @@ export const CRMProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [])
 
   const value: CRMContextType = {
+    isAuthenticated,
+    currentUser,
+    logout,
+    refreshData,
+    isDataLoading: storeStatus.isLoading,
+    isDataLoaded: storeStatus.isLoaded,
+    dataError: storeStatus.error,
     activeSection,
     setActiveSection,
     globalSearch,

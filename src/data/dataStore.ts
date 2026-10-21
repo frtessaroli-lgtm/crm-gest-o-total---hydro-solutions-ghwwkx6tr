@@ -1,5 +1,5 @@
+import pb from '@/lib/pocketbase/client'
 import {
-  CRMData,
   Client,
   Proposal,
   ServiceOrder,
@@ -8,135 +8,250 @@ import {
   Activity,
   CompanySettings,
   UserProfile,
+  CRMData,
 } from '../types/crm'
-import { INITIAL_DATA } from './seed'
 import { generateDigitableLine, calculateDaysOverdue } from '../utils/formatters'
-
-const STORAGE_KEY = 'nexocrm_data_v1'
 
 type Listener = () => void
 
-class DataStoreService {
-  private data: CRMData
+// Mapeamentos PocketBase Record -> CRM Types
+function mapClient(record: any): Client {
+  return {
+    id: record.id,
+    name: record.nome || '',
+    type: (record.tipo as 'PF' | 'PJ') || 'PJ',
+    email: record.email || '',
+    phone: record.telefone || '',
+    document: record.documento || '',
+    street: record.rua || '',
+    number: record.numero || '',
+    neighborhood: record.bairro || '',
+    city: record.cidade || '',
+    state: record.estado || '',
+    monthlyValue: typeof record.valor_mensal === 'number' ? record.valor_mensal : 0,
+    dueDay: typeof record.dia_vencimento === 'number' ? record.dia_vencimento : 10,
+    multifoco_client_id: record.multifoco_client_id || undefined,
+    notes: record.observacoes || '',
+    status: (record.status as 'ativo' | 'inativo') || 'ativo',
+    createdAt: record.created || new Date().toISOString(),
+  }
+}
+
+function mapProposal(record: any, clientMap: Map<string, string>): Proposal {
+  let parsedItems: any[] = []
+  if (record.itens) {
+    if (typeof record.itens === 'string') {
+      try {
+        parsedItems = JSON.parse(record.itens)
+      } catch (_) {
+        parsedItems = []
+      }
+    } else if (Array.isArray(record.itens)) {
+      parsedItems = record.itens
+    }
+  }
+
+  const clientId = record.cliente_id || ''
+  const clientName = record.expand?.cliente_id?.nome || clientMap.get(clientId) || 'Cliente'
+
+  return {
+    id: record.id,
+    code: record.codigo || `PROP-${record.id.slice(0, 6)}`,
+    clientId,
+    clientName,
+    title: record.titulo || '',
+    description: record.descricao || '',
+    items: parsedItems,
+    total: typeof record.valor === 'number' ? record.valor : 0,
+    status: record.status || 'rascunho',
+    createdAt: record.created || new Date().toISOString(),
+    validUntil: record.validade || undefined,
+  }
+}
+
+function mapServiceOrder(record: any, clientMap: Map<string, string>): ServiceOrder {
+  const clientId = record.cliente_id || ''
+  const clientName = record.expand?.cliente_id?.nome || clientMap.get(clientId) || 'Cliente'
+
+  return {
+    id: record.id,
+    code: record.code || record.numero_os || `OS-${record.id.slice(0, 6)}`,
+    clientId,
+    clientName,
+    proposalId: record.proposta_id || undefined,
+    title: record.titulo || '',
+    description: record.descricao || '',
+    technician: record.tecnico || '',
+    startDate: record.data_inicio || '',
+    endDate: record.data_fim || '',
+    value: typeof record.valor === 'number' ? record.valor : 0,
+    status: record.status || 'aberta',
+    createdAt: record.created || new Date().toISOString(),
+    completedAt: record.concluida_em || undefined,
+  }
+}
+
+function mapInvoice(record: any, clientMap: Map<string, string>): Invoice {
+  let osIds: string[] = []
+  let osCodes: string[] = []
+
+  if (record.os_ids) {
+    if (typeof record.os_ids === 'string') {
+      try {
+        osIds = JSON.parse(record.os_ids)
+      } catch {
+        /* intentionally ignored */
+      }
+    } else if (Array.isArray(record.os_ids)) {
+      osIds = record.os_ids
+    }
+  }
+  if (record.ordem_servico_id && !osIds.includes(record.ordem_servico_id)) {
+    osIds.unshift(record.ordem_servico_id)
+  }
+
+  if (record.os_codigos) {
+    if (typeof record.os_codigos === 'string') {
+      try {
+        osCodes = JSON.parse(record.os_codigos)
+      } catch {
+        /* intentionally ignored */
+      }
+    } else if (Array.isArray(record.os_codigos)) {
+      osCodes = record.os_codigos
+    }
+  }
+
+  const clientId = record.cliente_id || ''
+  const clientName = record.expand?.cliente_id?.nome || clientMap.get(clientId) || 'Cliente'
+
+  return {
+    id: record.id,
+    number: record.numero_nfse || record.id.slice(0, 8),
+    clientId,
+    clientName,
+    serviceOrderIds: osIds,
+    serviceOrderCodes: osCodes,
+    issueDate: record.emitida_em || (record.created ? record.created.split('T')[0] : ''),
+    total: typeof record.valor === 'number' ? record.valor : 0,
+    status: record.status || 'pendente',
+    createdAt: record.created || new Date().toISOString(),
+    notes: record.observacoes || '',
+  }
+}
+
+function mapCharge(record: any, clientMap: Map<string, string>): Charge {
+  const clientId = record.cliente_id || ''
+  const clientName = record.expand?.cliente_id?.nome || clientMap.get(clientId) || 'Cliente'
+
+  let normalizedStatus = record.status || 'Emitido'
+  if (normalizedStatus === 'em_aberto') normalizedStatus = 'Emitido'
+  else if (normalizedStatus === 'pago') normalizedStatus = 'Pago'
+  else if (normalizedStatus === 'em_atraso') normalizedStatus = 'Vencido'
+  else if (normalizedStatus === 'cancelado') normalizedStatus = 'Cancelado'
+
+  const dueDate = record.vencimento || ''
+  if (normalizedStatus === 'Emitido' && dueDate) {
+    const daysOver = calculateDaysOverdue(dueDate)
+    if (daysOver > 0) {
+      normalizedStatus = 'Vencido'
+    }
+  }
+
+  let competence = record.competencia
+  if (!competence && dueDate) {
+    const parts = dueDate.split('-')
+    if (parts.length >= 2) {
+      competence = `${parts[1]}/${parts[0]}`
+    }
+  }
+
+  return {
+    id: record.id,
+    code: record.codigo || `COB-${record.id.slice(0, 6)}`,
+    clientId,
+    clientName,
+    description: record.descricao || '',
+    competence: competence || '03/2025',
+    value: typeof record.valor === 'number' ? record.valor : 0,
+    dueDate,
+    paymentDate: record.pago_em || undefined,
+    status: normalizedStatus,
+    digitableLine: record.linha_digitavel || generateDigitableLine(),
+    method: 'boleto',
+    createdAt: record.created || new Date().toISOString(),
+  }
+}
+
+class PocketBaseDataStore {
+  private clients: Client[] = []
+  private proposals: Proposal[] = []
+  private serviceOrders: ServiceOrder[] = []
+  private invoices: Invoice[] = []
+  private charges: Charge[] = []
+  private activities: Activity[] = []
+
+  private companySettings: CompanySettings = {
+    companyName: 'Nexo Soluções Digitais e Consultoria Ltda',
+    tradeName: 'Nexo CRM & Tecnologia',
+    cnpj: '45.182.903/0001-84',
+    street: 'Av. Paulista',
+    number: '1374, Cj 112',
+    neighborhood: 'Bela Vista',
+    city: 'São Paulo',
+    state: 'SP',
+    postalCode: '01310-100',
+    email: 'financeiro@nexocrm.com.br',
+    phone: '(11) 3280-4490',
+    boletoProvider: 'Banco Inter (API V2) / Asaas Webhook',
+    multiFocoBaseUrl: 'https://api.multifoco.com.br',
+    multiFocoApiToken: '',
+  }
+
+  private userProfile: UserProfile = {
+    name: 'Carlos Tessaroli',
+    email: 'fr.tessaroli@gmail.com',
+    role: 'Administrador / Gestor Comercial',
+    avatarUrl: 'https://img.usecurling.com/ppl/medium?gender=male&seed=42',
+  }
+
   private listeners: Set<Listener> = new Set()
+  private isLoaded = false
+  private isLoading = false
+  private loadError: string | null = null
 
   constructor() {
-    this.data = this.loadFromStorage()
-  }
-
-  private loadFromStorage(): CRMData {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored) {
-        const parsed = JSON.parse(stored) as CRMData
-        // Valida se os campos essenciais existem
-        if (
-          Array.isArray(parsed.clients) &&
-          Array.isArray(parsed.proposals) &&
-          Array.isArray(parsed.serviceOrders) &&
-          Array.isArray(parsed.invoices) &&
-          Array.isArray(parsed.charges)
-        ) {
-          // Garante retrocompatibilidade: campos novos em clientes legados
-          parsed.clients = parsed.clients.map((c) => {
-            const cleanDoc = (c.document || '').replace(/\D/g, '')
-            return {
-              ...c,
-              type: c.type || (cleanDoc.length === 11 ? 'PF' : 'PJ'),
-              monthlyValue: typeof c.monthlyValue === 'number' ? c.monthlyValue : 0,
-              dueDay: typeof c.dueDay === 'number' ? c.dueDay : 10,
-              multifoco_client_id: c.multifoco_client_id || undefined,
-            }
-          })
-
-          // Migração retrocompatível de cobranças:
-          // Status legados ('em_aberto' -> 'Emitido', 'pago' -> 'Pago', 'em_atraso' -> 'Vencido', 'cancelado' -> 'Cancelado')
-          // Auto-vencimento: se status for Emitido (ou em_aberto) e vencimento anterior a hoje, vira 'Vencido'
-          // Garantir digitableLine e competence
-          parsed.charges = parsed.charges.map((c) => {
-            let normalizedStatus = c.status
-            if (normalizedStatus === 'em_aberto') normalizedStatus = 'Emitido'
-            else if (normalizedStatus === 'pago') normalizedStatus = 'Pago'
-            else if (normalizedStatus === 'em_atraso') normalizedStatus = 'Vencido'
-            else if (normalizedStatus === 'cancelado') normalizedStatus = 'Cancelado'
-
-            // Vencimento automático: se Emitido e vencimento anterior a hoje, vira Vencido
-            if (normalizedStatus === 'Emitido' && c.dueDate) {
-              const daysOver = calculateDaysOverdue(c.dueDate)
-              if (daysOver > 0) {
-                normalizedStatus = 'Vencido'
-              }
-            }
-
-            // Competência fallback a partir do dueDate ou createdAt
-            let competence = c.competence
-            if (!competence) {
-              const dateRef = c.dueDate || c.createdAt || new Date().toISOString()
-              const parts = dateRef.split('T')[0].split('-')
-              if (parts.length >= 2) {
-                competence = `${parts[1]}/${parts[0]}`
-              } else {
-                competence = '03/2025'
-              }
-            }
-
-            return {
-              ...c,
-              status: normalizedStatus,
-              competence,
-              digitableLine: c.digitableLine || generateDigitableLine(),
-            }
-          })
-
-          if (parsed.companySettings) {
-            parsed.companySettings.multiFocoBaseUrl =
-              parsed.companySettings.multiFocoBaseUrl || 'https://api.multifoco.com.br'
-            parsed.companySettings.multiFocoApiToken =
-              parsed.companySettings.multiFocoApiToken || ''
-          }
-          return parsed
-        }
+    this.syncCurrentUser()
+    pb.authStore.onChange(() => {
+      this.syncCurrentUser()
+      if (pb.authStore.isValid) {
+        this.fetchAll()
+      } else {
+        this.clearData()
       }
-    } catch {
-      // Ignora erro de JSON e re-seeda
-    }
-    this.saveToStorage(INITIAL_DATA)
-    return JSON.parse(JSON.stringify(INITIAL_DATA))
+    })
   }
 
-  private saveToStorage(data: CRMData): void {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-    } catch {
-      // Quota exceeded ou storage inacessível
-    }
-  }
-
-  private commit(newActivity?: {
-    type: Activity['type']
-    action: string
-    title: string
-    entityId: string
-    status?: string
-  }): void {
-    if (newActivity) {
-      const act: Activity = {
-        id: 'act-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
-        ...newActivity,
-        timestamp: new Date().toISOString(),
+  private syncCurrentUser() {
+    const authUser = pb.authStore.record
+    if (authUser) {
+      this.userProfile = {
+        name: authUser.getString?.('name') || authUser.name || 'Carlos Tessaroli',
+        email: authUser.email || 'fr.tessaroli@gmail.com',
+        role: 'Administrador / Gestor Comercial',
+        avatarUrl: authUser.avatar
+          ? pb.files.getURL(authUser, authUser.avatar)
+          : 'https://img.usecurling.com/ppl/medium?gender=male&seed=42',
       }
-      this.data.activities = [act, ...this.data.activities.slice(0, 49)]
     }
-    this.saveToStorage(this.data)
-    this.notify()
   }
 
-  private notify(): void {
+  private notify() {
     this.listeners.forEach((fn) => {
       try {
         fn()
       } catch {
-        // Safe dispatch
+        /* intentionally ignored */
       }
     })
   }
@@ -146,479 +261,592 @@ class DataStoreService {
     return () => this.listeners.delete(listener)
   }
 
-  public getDataSnapshot(): CRMData {
-    return this.data
+  public getStatus() {
+    return {
+      isLoaded: this.isLoaded,
+      isLoading: this.isLoading,
+      error: this.loadError,
+    }
   }
 
-  // Clientes
+  public clearData() {
+    this.clients = []
+    this.proposals = []
+    this.serviceOrders = []
+    this.invoices = []
+    this.charges = []
+    this.activities = []
+    this.isLoaded = false
+    this.loadError = null
+    this.notify()
+  }
+
+  public async fetchAll(): Promise<void> {
+    if (!pb.authStore.isValid) {
+      this.isLoaded = false
+      this.notify()
+      return
+    }
+
+    this.isLoading = true
+    this.loadError = null
+    this.notify()
+
+    try {
+      const [rawClients, rawProposals, rawOS, rawInvoices, rawCharges] = await Promise.all([
+        pb.collection('clientes').getFullList({ sort: '-created' }),
+        pb.collection('propostas').getFullList({ sort: '-created', expand: 'cliente_id' }),
+        pb.collection('ordens_servico').getFullList({ sort: '-created', expand: 'cliente_id' }),
+        pb.collection('notas_fiscais').getFullList({ sort: '-created', expand: 'cliente_id' }),
+        pb.collection('cobrancas').getFullList({ sort: '-created', expand: 'cliente_id' }),
+      ])
+
+      const clientMap = new Map<string, string>()
+      this.clients = rawClients.map((r) => {
+        const c = mapClient(r)
+        clientMap.set(c.id, c.name)
+        return c
+      })
+
+      this.proposals = rawProposals.map((r) => mapProposal(r, clientMap))
+      this.serviceOrders = rawOS.map((r) => mapServiceOrder(r, clientMap))
+      this.invoices = rawInvoices.map((r) => mapInvoice(r, clientMap))
+      this.charges = rawCharges.map((r) => mapCharge(r, clientMap))
+
+      this.rebuildActivities()
+      this.isLoaded = true
+      this.isLoading = false
+      this.notify()
+    } catch (err: any) {
+      console.error('Failed to fetch PocketBase data:', err)
+      this.loadError = err?.message || 'Erro ao carregar dados do banco de dados.'
+      this.isLoading = false
+      this.notify()
+      throw err
+    }
+  }
+
+  private rebuildActivities() {
+    const list: Activity[] = []
+
+    this.charges.slice(0, 5).forEach((c) => {
+      list.push({
+        id: `act-cob-${c.id}`,
+        type: 'cobranca',
+        action: c.status === 'Pago' ? 'Pagamento compensado' : `Cobrança ${c.status}`,
+        title: `${c.code}: ${c.description} (${c.clientName})`,
+        entityId: c.id,
+        status: c.status,
+        timestamp: c.paymentDate || c.createdAt,
+      })
+    })
+
+    this.proposals.slice(0, 4).forEach((p) => {
+      list.push({
+        id: `act-prop-${p.id}`,
+        type: 'proposta',
+        action: `Proposta ${p.status}`,
+        title: `${p.code}: ${p.title} (${p.clientName})`,
+        entityId: p.id,
+        status: p.status,
+        timestamp: p.createdAt,
+      })
+    })
+
+    this.serviceOrders.slice(0, 4).forEach((o) => {
+      list.push({
+        id: `act-os-${o.id}`,
+        type: 'ordem_servico',
+        action: `OS ${o.status.replace('_', ' ')}`,
+        title: `${o.code}: ${o.title} (${o.clientName})`,
+        entityId: o.id,
+        status: o.status,
+        timestamp: o.completedAt || o.createdAt,
+      })
+    })
+
+    this.invoices.slice(0, 3).forEach((n) => {
+      list.push({
+        id: `act-nf-${n.id}`,
+        type: 'nota_fiscal',
+        action: `NF ${n.status}`,
+        title: `NF ${n.number} emitida para ${n.clientName}`,
+        entityId: n.id,
+        status: n.status,
+        timestamp: n.createdAt,
+      })
+    })
+
+    list.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))
+    this.activities = list.slice(0, 20)
+  }
+
+  // Getters síncronos
+  public getDataSnapshot(): CRMData {
+    return {
+      clients: this.clients,
+      proposals: this.proposals,
+      serviceOrders: this.serviceOrders,
+      invoices: this.invoices,
+      charges: this.charges,
+      activities: this.activities,
+      companySettings: this.companySettings,
+      userProfile: this.userProfile,
+    }
+  }
+
   public getClients(): Client[] {
-    return [...this.data.clients]
+    return [...this.clients]
   }
 
   public getClientById(id: string): Client | undefined {
-    return this.data.clients.find((c) => c.id === id)
+    return this.clients.find((c) => c.id === id)
   }
 
-  public saveClient(client: Omit<Client, 'id' | 'createdAt'> & { id?: string }): Client {
-    if (client.id) {
-      const index = this.data.clients.findIndex((c) => c.id === client.id)
-      if (index >= 0) {
-        const updated: Client = {
-          ...this.data.clients[index],
-          ...client,
-          id: client.id,
-        }
-        this.data.clients[index] = updated
-
-        // Atualiza nome do cliente em propostas, OS, faturas e cobranças se mudou
-        this.data.proposals.forEach((p) => {
-          if (p.clientId === updated.id) p.clientName = updated.name
-        })
-        this.data.serviceOrders.forEach((o) => {
-          if (o.clientId === updated.id) o.clientName = updated.name
-        })
-        this.data.invoices.forEach((i) => {
-          if (i.clientId === updated.id) i.clientName = updated.name
-        })
-        this.data.charges.forEach((c) => {
-          if (c.clientId === updated.id) c.clientName = updated.name
-        })
-
-        this.commit({
-          type: 'cliente',
-          action: 'Dados cadastrais atualizados',
-          title: `Cliente ${updated.name} foi atualizado`,
-          entityId: updated.id,
-        })
-        return updated
-      }
-    }
-
-    const newId = 'cli-' + Date.now()
-    const created: Client = {
-      ...client,
-      type: client.type || (client.document.replace(/\D/g, '').length === 11 ? 'PF' : 'PJ'),
-      id: newId,
-      createdAt: new Date().toISOString(),
-    }
-    this.data.clients = [created, ...this.data.clients]
-    this.commit({
-      type: 'cliente',
-      action: 'Novo cliente cadastrado',
-      title: `${created.name} (${created.city}/${created.state})`,
-      entityId: newId,
-      status: created.status,
-    })
-    return created
-  }
-
-  public deleteClient(id: string): void {
-    const client = this.getClientById(id)
-    this.data.clients = this.data.clients.filter((c) => c.id !== id)
-    this.commit({
-      type: 'cliente',
-      action: 'Cliente removido',
-      title: client ? `Cliente ${client.name} foi removido` : 'Cliente removido',
-      entityId: id,
-    })
-  }
-
-  // Propostas
   public getProposals(): Proposal[] {
-    return [...this.data.proposals]
+    return [...this.proposals]
   }
 
   public getProposalById(id: string): Proposal | undefined {
-    return this.data.proposals.find((p) => p.id === id)
+    return this.proposals.find((p) => p.id === id)
   }
 
-  public saveProposal(
-    proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
-  ): Proposal {
-    const client = this.getClientById(proposal.clientId)
-    const clientName = client ? client.name : proposal.clientName
-    const computedTotal = proposal.items.reduce((acc, i) => acc + i.quantity * i.unitPrice, 0)
-
-    if (proposal.id) {
-      const idx = this.data.proposals.findIndex((p) => p.id === proposal.id)
-      if (idx >= 0) {
-        const updated: Proposal = {
-          ...this.data.proposals[idx],
-          ...proposal,
-          clientName,
-          total: computedTotal,
-        }
-        this.data.proposals[idx] = updated
-        this.commit({
-          type: 'proposta',
-          action: 'Proposta atualizada',
-          title: `${updated.code}: ${updated.title} (${clientName})`,
-          entityId: updated.id,
-          status: updated.status,
-        })
-        return updated
-      }
-    }
-
-    const year = new Date().getFullYear()
-    const count = this.data.proposals.length + 1
-    const code = `PROP-${year}-${String(count).padStart(3, '0')}`
-    const newId = 'prop-' + Date.now()
-    const created: Proposal = {
-      ...proposal,
-      id: newId,
-      code,
-      clientName,
-      total: computedTotal,
-      createdAt: new Date().toISOString(),
-    }
-    this.data.proposals = [created, ...this.data.proposals]
-    this.commit({
-      type: 'proposta',
-      action: 'Nova proposta elaborada',
-      title: `${created.code} para ${clientName}`,
-      entityId: newId,
-      status: created.status,
-    })
-    return created
-  }
-
-  public updateProposalStatus(id: string, status: Proposal['status']): void {
-    const p = this.data.proposals.find((item) => item.id === id)
-    if (!p) return
-    p.status = status
-    this.commit({
-      type: 'proposta',
-      action: `Proposta marcada como ${status}`,
-      title: `${p.code} (${p.clientName}) alterada para ${status.toUpperCase()}`,
-      entityId: p.id,
-      status,
-    })
-  }
-
-  public deleteProposal(id: string): void {
-    this.data.proposals = this.data.proposals.filter((p) => p.id !== id)
-    this.commit()
-  }
-
-  // Ordens de Serviço
   public getServiceOrders(): ServiceOrder[] {
-    return [...this.data.serviceOrders]
+    return [...this.serviceOrders]
   }
 
   public getServiceOrderById(id: string): ServiceOrder | undefined {
-    return this.data.serviceOrders.find((s) => s.id === id)
+    return this.serviceOrders.find((s) => s.id === id)
   }
 
-  public saveServiceOrder(
-    os: Omit<ServiceOrder, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
-  ): ServiceOrder {
-    const client = this.getClientById(os.clientId)
-    const clientName = client ? client.name : os.clientName
-
-    if (os.id) {
-      const idx = this.data.serviceOrders.findIndex((s) => s.id === os.id)
-      if (idx >= 0) {
-        const updated: ServiceOrder = {
-          ...this.data.serviceOrders[idx],
-          ...os,
-          clientName,
-        }
-        this.data.serviceOrders[idx] = updated
-        this.commit({
-          type: 'ordem_servico',
-          action: 'Ordem de serviço atualizada',
-          title: `${updated.code}: ${updated.title}`,
-          entityId: updated.id,
-          status: updated.status,
-        })
-        return updated
-      }
-    }
-
-    const year = new Date().getFullYear()
-    const count = this.data.serviceOrders.length + 1
-    const code = `OS-${year}-${String(count).padStart(3, '0')}`
-    const newId = 'os-' + Date.now()
-    const created: ServiceOrder = {
-      ...os,
-      id: newId,
-      code,
-      clientName,
-      createdAt: new Date().toISOString(),
-    }
-    this.data.serviceOrders = [created, ...this.data.serviceOrders]
-    this.commit({
-      type: 'ordem_servico',
-      action: 'Nova OS aberta',
-      title: `${created.code} iniciada para ${clientName}`,
-      entityId: newId,
-      status: created.status,
-    })
-    return created
-  }
-
-  public completeServiceOrder(id: string): void {
-    const os = this.data.serviceOrders.find((item) => item.id === id)
-    if (!os) return
-    os.status = 'concluida'
-    os.completedAt = new Date().toISOString()
-    this.commit({
-      type: 'ordem_servico',
-      action: 'Ordem de serviço concluída',
-      title: `${os.code} foi concluída com sucesso`,
-      entityId: os.id,
-      status: 'concluida',
-    })
-  }
-
-  public updateServiceOrderStatus(id: string, status: ServiceOrder['status']): void {
-    const os = this.data.serviceOrders.find((item) => item.id === id)
-    if (!os) return
-    os.status = status
-    if (status === 'concluida' && !os.completedAt) {
-      os.completedAt = new Date().toISOString()
-    }
-    this.commit({
-      type: 'ordem_servico',
-      action: `OS atualizada para ${status}`,
-      title: `${os.code} alterada para status ${status}`,
-      entityId: os.id,
-      status,
-    })
-  }
-
-  // Notas Fiscais
   public getInvoices(): Invoice[] {
-    return [...this.data.invoices]
+    return [...this.invoices]
   }
 
   public getInvoiceById(id: string): Invoice | undefined {
-    return this.data.invoices.find((i) => i.id === id)
+    return this.invoices.find((i) => i.id === id)
   }
 
-  public saveInvoice(
-    invoice: Omit<Invoice, 'id' | 'number' | 'createdAt'> & { id?: string; number?: string },
-  ): Invoice {
-    const client = this.getClientById(invoice.clientId)
-    const clientName = client ? client.name : invoice.clientName
-
-    // Garante códigos das OS vinculadas
-    const serviceOrderCodes = invoice.serviceOrderIds.map((osId) => {
-      const os = this.data.serviceOrders.find((o) => o.id === osId)
-      return os ? os.code : osId
-    })
-
-    if (invoice.id) {
-      const idx = this.data.invoices.findIndex((i) => i.id === invoice.id)
-      if (idx >= 0) {
-        const updated: Invoice = {
-          ...this.data.invoices[idx],
-          ...invoice,
-          clientName,
-          serviceOrderCodes,
-        }
-        this.data.invoices[idx] = updated
-        this.commit({
-          type: 'nota_fiscal',
-          action: 'Nota fiscal atualizada',
-          title: `NF ${updated.number} (${clientName})`,
-          entityId: updated.id,
-          status: updated.status,
-        })
-        return updated
-      }
-    }
-
-    const year = new Date().getFullYear()
-    const count = this.data.invoices.length + 94 // Gera sequência tipo 20250094
-    const number = `${year}${String(count).padStart(4, '0')}`
-    const newId = 'nf-' + Date.now()
-    const created: Invoice = {
-      ...invoice,
-      id: newId,
-      number,
-      clientName,
-      serviceOrderCodes,
-      createdAt: new Date().toISOString(),
-    }
-    this.data.invoices = [created, ...this.data.invoices]
-    this.commit({
-      type: 'nota_fiscal',
-      action: 'Nota fiscal gerada',
-      title: `NF ${created.number} emitida para ${clientName}`,
-      entityId: newId,
-      status: created.status,
-    })
-    return created
-  }
-
-  public updateInvoiceStatus(id: string, status: Invoice['status']): void {
-    const inv = this.data.invoices.find((i) => i.id === id)
-    if (!inv) return
-    inv.status = status
-    this.commit({
-      type: 'nota_fiscal',
-      action:
-        status === 'enviada'
-          ? 'Nota fiscal enviada ao cliente'
-          : `Status da NF ${inv.number} alterado`,
-      title: `NF ${inv.number} atualizada para ${status.toUpperCase()}`,
-      entityId: inv.id,
-      status,
-    })
-  }
-
-  // Cobranças
   public getCharges(): Charge[] {
-    return [...this.data.charges]
+    return [...this.charges]
   }
 
   public getChargeById(id: string): Charge | undefined {
-    return this.data.charges.find((c) => c.id === id)
+    return this.charges.find((c) => c.id === id)
   }
 
-  /**
-   * Verifica cobranças com status 'Emitido' (ou 'em_aberto') e data de vencimento anterior a hoje,
-   * atualizando-as para 'Vencido'. Não rebaixa cobranças 'Pago'.
-   */
-  public checkAndExpireCharges(): number {
+  public getActivities(): Activity[] {
+    return [...this.activities]
+  }
+
+  public getCompanySettings(): CompanySettings {
+    return { ...this.companySettings }
+  }
+
+  public getUserProfile(): UserProfile {
+    return { ...this.userProfile }
+  }
+
+  // Mutators assíncronos que sincronizam com o PocketBase
+  public async saveClient(
+    client: Omit<Client, 'id' | 'createdAt'> & { id?: string },
+  ): Promise<Client> {
+    const payload = {
+      nome: client.name,
+      tipo: client.type,
+      documento: client.document,
+      email: client.email || '',
+      telefone: client.phone || '',
+      rua: client.street || '',
+      numero: client.number || '',
+      bairro: client.neighborhood || '',
+      cidade: client.city || '',
+      estado: client.state || '',
+      endereco: `${client.street || ''}, ${client.number || ''} - ${client.city || ''}/${client.state || ''}`,
+      valor_mensal: client.monthlyValue || 0,
+      dia_vencimento: client.dueDay || 10,
+      status: client.status,
+      observacoes: client.notes || '',
+      multifoco_client_id: client.multifoco_client_id || '',
+    }
+
+    let record: any
+    if (client.id && this.clients.some((c) => c.id === client.id)) {
+      record = await pb.collection('clientes').update(client.id, payload)
+      const mapped = mapClient(record)
+      this.clients = this.clients.map((c) => (c.id === mapped.id ? mapped : c))
+      // Atualiza nome em caches locais
+      this.proposals.forEach((p) => {
+        if (p.clientId === mapped.id) p.clientName = mapped.name
+      })
+      this.serviceOrders.forEach((o) => {
+        if (o.clientId === mapped.id) o.clientName = mapped.name
+      })
+      this.invoices.forEach((i) => {
+        if (i.clientId === mapped.id) i.clientName = mapped.name
+      })
+      this.charges.forEach((c) => {
+        if (c.clientId === mapped.id) c.clientName = mapped.name
+      })
+      this.notify()
+      return mapped
+    } else {
+      record = await pb.collection('clientes').create(payload)
+      const mapped = mapClient(record)
+      this.clients = [mapped, ...this.clients]
+      this.notify()
+      return mapped
+    }
+  }
+
+  public async deleteClient(id: string): Promise<void> {
+    await pb.collection('clientes').delete(id)
+    this.clients = this.clients.filter((c) => c.id !== id)
+    this.notify()
+  }
+
+  public async saveProposal(
+    proposal: Omit<Proposal, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
+  ): Promise<Proposal> {
+    const computedTotal = proposal.items.reduce(
+      (acc, i) => acc + (i.quantity || 0) * (i.unitPrice || 0),
+      0,
+    )
+    const code =
+      proposal.code ||
+      `PROP-${new Date().getFullYear()}-${String(this.proposals.length + 1).padStart(3, '0')}`
+
+    const payload = {
+      cliente_id: proposal.clientId,
+      codigo: code,
+      titulo: proposal.title,
+      descricao: proposal.description || '',
+      valor: computedTotal,
+      status: proposal.status,
+      validade: proposal.validUntil || '',
+      itens: JSON.stringify(proposal.items || []),
+    }
+
+    let record: any
+    const clientMap = new Map(this.clients.map((c) => [c.id, c.name]))
+    if (proposal.id && this.proposals.some((p) => p.id === proposal.id)) {
+      record = await pb
+        .collection('propostas')
+        .update(proposal.id, payload, { expand: 'cliente_id' })
+      const mapped = mapProposal(record, clientMap)
+      this.proposals = this.proposals.map((p) => (p.id === mapped.id ? mapped : p))
+      this.notify()
+      return mapped
+    } else {
+      record = await pb.collection('propostas').create(payload, { expand: 'cliente_id' })
+      const mapped = mapProposal(record, clientMap)
+      this.proposals = [mapped, ...this.proposals]
+      this.notify()
+      return mapped
+    }
+  }
+
+  public async updateProposalStatus(id: string, status: Proposal['status']): Promise<void> {
+    await pb.collection('propostas').update(id, { status })
+    this.proposals = this.proposals.map((p) => (p.id === id ? { ...p, status } : p))
+    this.notify()
+  }
+
+  public async deleteProposal(id: string): Promise<void> {
+    await pb.collection('propostas').delete(id)
+    this.proposals = this.proposals.filter((p) => p.id !== id)
+    this.notify()
+  }
+
+  public async saveServiceOrder(
+    os: Omit<ServiceOrder, 'id' | 'code' | 'createdAt'> & { id?: string; code?: string },
+  ): Promise<ServiceOrder> {
+    const code =
+      os.code ||
+      `OS-${new Date().getFullYear()}-${String(this.serviceOrders.length + 1).padStart(3, '0')}`
+    const payload = {
+      cliente_id: os.clientId,
+      proposta_id: os.proposalId || null,
+      code,
+      numero_os: code,
+      titulo: os.title,
+      descricao: os.description || '',
+      tecnico: os.technician || '',
+      data_inicio: os.startDate || '',
+      data_fim: os.endDate || '',
+      valor: Number(os.value) || 0,
+      status: os.status,
+    }
+
+    let record: any
+    const clientMap = new Map(this.clients.map((c) => [c.id, c.name]))
+    if (os.id && this.serviceOrders.some((s) => s.id === os.id)) {
+      record = await pb
+        .collection('ordens_servico')
+        .update(os.id, payload, { expand: 'cliente_id' })
+      const mapped = mapServiceOrder(record, clientMap)
+      this.serviceOrders = this.serviceOrders.map((s) => (s.id === mapped.id ? mapped : s))
+      this.notify()
+      return mapped
+    } else {
+      record = await pb.collection('ordens_servico').create(payload, { expand: 'cliente_id' })
+      const mapped = mapServiceOrder(record, clientMap)
+      this.serviceOrders = [mapped, ...this.serviceOrders]
+      this.notify()
+      return mapped
+    }
+  }
+
+  public async completeServiceOrder(id: string): Promise<void> {
+    const completedAt = new Date().toISOString()
+    await pb
+      .collection('ordens_servico')
+      .update(id, { status: 'concluida', concluida_em: completedAt })
+    this.serviceOrders = this.serviceOrders.map((o) =>
+      o.id === id ? { ...o, status: 'concluida', completedAt } : o,
+    )
+    this.notify()
+  }
+
+  public async updateServiceOrderStatus(id: string, status: ServiceOrder['status']): Promise<void> {
+    const updatePayload: any = { status }
+    if (status === 'concluida') {
+      updatePayload.concluida_em = new Date().toISOString()
+    }
+    await pb.collection('ordens_servico').update(id, updatePayload)
+    this.serviceOrders = this.serviceOrders.map((o) =>
+      o.id === id ? { ...o, status, completedAt: updatePayload.concluida_em || o.completedAt } : o,
+    )
+    this.notify()
+  }
+
+  public async saveInvoice(
+    invoice: Omit<Invoice, 'id' | 'number' | 'createdAt'> & { id?: string; number?: string },
+  ): Promise<Invoice> {
+    const number =
+      invoice.number ||
+      `${new Date().getFullYear()}${String(this.invoices.length + 95).padStart(4, '0')}`
+    const osCodes = invoice.serviceOrderIds.map((osId) => {
+      const os = this.serviceOrders.find((o) => o.id === osId)
+      return os ? os.code : osId
+    })
+
+    const payload = {
+      cliente_id: invoice.clientId,
+      numero_nfse: number,
+      ordem_servico_id: invoice.serviceOrderIds[0] || null,
+      os_ids: JSON.stringify(invoice.serviceOrderIds),
+      os_codigos: JSON.stringify(osCodes),
+      emitida_em: invoice.issueDate || new Date().toISOString().split('T')[0],
+      valor: Number(invoice.total) || 0,
+      status: invoice.status,
+      observacoes: invoice.notes || '',
+    }
+
+    let record: any
+    const clientMap = new Map(this.clients.map((c) => [c.id, c.name]))
+    if (invoice.id && this.invoices.some((i) => i.id === invoice.id)) {
+      record = await pb
+        .collection('notas_fiscais')
+        .update(invoice.id, payload, { expand: 'cliente_id' })
+      const mapped = mapInvoice(record, clientMap)
+      this.invoices = this.invoices.map((i) => (i.id === mapped.id ? mapped : i))
+      this.notify()
+      return mapped
+    } else {
+      record = await pb.collection('notas_fiscais').create(payload, { expand: 'cliente_id' })
+      const mapped = mapInvoice(record, clientMap)
+      this.invoices = [mapped, ...this.invoices]
+      this.notify()
+      return mapped
+    }
+  }
+
+  public async updateInvoiceStatus(id: string, status: Invoice['status']): Promise<void> {
+    await pb.collection('notas_fiscais').update(id, { status })
+    this.invoices = this.invoices.map((i) => (i.id === id ? { ...i, status } : i))
+    this.notify()
+  }
+
+  public async saveCharge(
+    charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
+  ): Promise<Charge> {
+    const code = charge.code || `COB-${1096 + this.charges.length}`
+    const digitableLine = charge.digitableLine || generateDigitableLine()
+    const payload = {
+      cliente_id: charge.clientId,
+      codigo: code,
+      descricao: charge.description || '',
+      competencia: charge.competence || '03/2025',
+      valor: Number(charge.value) || 0,
+      vencimento: charge.dueDate,
+      status: charge.status || 'Emitido',
+      linha_digitavel: digitableLine,
+      metodo: 'boleto',
+      pago_em: charge.paymentDate || '',
+    }
+
+    let record: any
+    const clientMap = new Map(this.clients.map((c) => [c.id, c.name]))
+    if (charge.id && this.charges.some((c) => c.id === charge.id)) {
+      record = await pb.collection('cobrancas').update(charge.id, payload, { expand: 'cliente_id' })
+      const mapped = mapCharge(record, clientMap)
+      this.charges = this.charges.map((c) => (c.id === mapped.id ? mapped : c))
+      this.notify()
+      return mapped
+    } else {
+      record = await pb.collection('cobrancas').create(payload, { expand: 'cliente_id' })
+      const mapped = mapCharge(record, clientMap)
+      this.charges = [mapped, ...this.charges]
+      this.notify()
+      return mapped
+    }
+  }
+
+  public async checkAndExpireCharges(): Promise<number> {
     let changed = 0
-    this.data.charges.forEach((c) => {
-      const isIssued = c.status === 'Emitido' || c.status === 'em_aberto'
+    const updates: Promise<any>[] = []
+
+    this.charges.forEach((c) => {
+      const isIssued = c.status === 'Emitido' || (c.status as any) === 'em_aberto'
       if (isIssued && c.dueDate) {
         const daysOver = calculateDaysOverdue(c.dueDate)
         if (daysOver > 0) {
           c.status = 'Vencido'
           changed++
+          updates.push(
+            pb
+              .collection('cobrancas')
+              .update(c.id, { status: 'Vencido' })
+              .catch(() => {}),
+          )
         }
       }
     })
+
     if (changed > 0) {
-      this.commit({
-        type: 'cobranca',
-        action: 'Atualização automática de vencimento',
-        title: `${changed} cobrança(s) expirada(s) marcadas como Vencido`,
-        entityId: 'auto-expire',
-        status: 'Vencido',
-      })
+      this.notify()
+      await Promise.allSettled(updates)
     }
     return changed
   }
 
-  public saveCharge(
-    charge: Omit<Charge, 'id' | 'code' | 'createdAt' | 'method'> & { id?: string; code?: string },
-  ): Charge {
-    const client = this.getClientById(charge.clientId)
-    const clientName = client ? client.name : charge.clientName
-
-    if (charge.id) {
-      const idx = this.data.charges.findIndex((c) => c.id === charge.id)
-      if (idx >= 0) {
-        const existing = this.data.charges[idx]
-        const updated: Charge = {
-          ...existing,
-          ...charge,
-          clientName,
-          digitableLine: charge.digitableLine || existing.digitableLine || generateDigitableLine(),
-        }
-        this.data.charges[idx] = updated
-        this.commit({
-          type: 'cobranca',
-          action: 'Cobrança alterada',
-          title: `${updated.code}: ${updated.description}`,
-          entityId: updated.id,
-          status: updated.status,
-        })
-        return updated
-      }
-    }
-
-    const count = 1096 + this.data.charges.length
-    const code = `COB-${count}`
-    const newId = 'cob-' + Date.now() + '-' + Math.random().toString(36).substring(2, 5)
-    const created: Charge = {
-      ...charge,
-      id: newId,
-      code,
-      clientName,
-      status: charge.status || 'Emitido',
-      digitableLine: charge.digitableLine || generateDigitableLine(),
-      method: 'boleto',
-      createdAt: new Date().toISOString(),
-    }
-    this.data.charges = [created, ...this.data.charges]
-    this.commit({
-      type: 'cobranca',
-      action: 'Boleto de cobrança gerado',
-      title: `${created.code} gerado para ${clientName}`,
-      entityId: newId,
-      status: created.status,
-    })
-    return created
+  public async registerPayment(id: string): Promise<void> {
+    const paymentDate = new Date().toISOString().split('T')[0]
+    await pb.collection('cobrancas').update(id, { status: 'Pago', pago_em: paymentDate })
+    this.charges = this.charges.map((c) =>
+      c.id === id ? { ...c, status: 'Pago', paymentDate } : c,
+    )
+    this.notify()
   }
 
-  public registerPayment(id: string): void {
-    const c = this.data.charges.find((item) => item.id === id)
-    if (!c) return
-    c.status = 'Pago'
-    c.paymentDate = new Date().toISOString().split('T')[0]
-    this.commit({
-      type: 'cobranca',
-      action: 'Pagamento de boleto compensado',
-      title: `Boleto ${c.code} liquidado por ${c.clientName}`,
-      entityId: c.id,
-      status: 'Pago',
-    })
-  }
-
-  public cancelCharge(id: string): void {
-    const c = this.data.charges.find((item) => item.id === id)
-    if (!c) return
-    c.status = 'Cancelado'
-    this.commit({
-      type: 'cobranca',
-      action: 'Boleto cancelado',
-      title: `Boleto ${c.code} (${c.clientName}) foi cancelado`,
-      entityId: c.id,
-      status: 'Cancelado',
-    })
-  }
-
-  // Atividades
-  public getActivities(): Activity[] {
-    return [...this.data.activities]
-  }
-
-  // Configurações e Perfil
-  public getCompanySettings(): CompanySettings {
-    return { ...this.data.companySettings }
+  public async cancelCharge(id: string): Promise<void> {
+    await pb.collection('cobrancas').update(id, { status: 'Cancelado' })
+    this.charges = this.charges.map((c) => (c.id === id ? { ...c, status: 'Cancelado' } : c))
+    this.notify()
   }
 
   public saveCompanySettings(settings: CompanySettings): void {
-    this.data.companySettings = { ...settings }
-    this.commit()
+    this.companySettings = { ...settings }
+    this.notify()
   }
 
-  public getUserProfile(): UserProfile {
-    return { ...this.data.userProfile }
+  public async saveUserProfile(profile: UserProfile): Promise<void> {
+    this.userProfile = { ...profile }
+    const authUser = pb.authStore.record
+    if (authUser) {
+      try {
+        await pb.collection('users').update(authUser.id, { name: profile.name })
+      } catch {
+        /* intentionally ignored */
+      }
+    }
+    this.notify()
   }
 
-  public saveUserProfile(profile: UserProfile): void {
-    this.data.userProfile = { ...profile }
-    this.commit()
-  }
-
-  // Gestão de Dados
   public exportDataJSON(): string {
-    return JSON.stringify(this.data, null, 2)
+    return JSON.stringify(this.getDataSnapshot(), null, 2)
   }
 
-  public resetToSampleData(): void {
-    this.data = JSON.parse(JSON.stringify(INITIAL_DATA))
-    this.saveToStorage(this.data)
+  public async resetToSampleData(): Promise<void> {
+    await this.fetchAll()
+  }
+
+  // Realtime handler para atualizações remotas via SSE
+  public handleRealtimeEvent(collection: string, action: string, record: any) {
+    const clientMap = new Map(this.clients.map((c) => [c.id, c.name]))
+
+    switch (collection) {
+      case 'clientes': {
+        const mapped = mapClient(record)
+        if (action === 'delete') {
+          this.clients = this.clients.filter((c) => c.id !== mapped.id)
+        } else if (action === 'create') {
+          if (!this.clients.some((c) => c.id === mapped.id)) {
+            this.clients = [mapped, ...this.clients]
+          }
+        } else if (action === 'update') {
+          this.clients = this.clients.map((c) => (c.id === mapped.id ? mapped : c))
+        }
+        break
+      }
+      case 'propostas': {
+        const mapped = mapProposal(record, clientMap)
+        if (action === 'delete') {
+          this.proposals = this.proposals.filter((p) => p.id !== mapped.id)
+        } else if (action === 'create') {
+          if (!this.proposals.some((p) => p.id === mapped.id)) {
+            this.proposals = [mapped, ...this.proposals]
+          }
+        } else if (action === 'update') {
+          this.proposals = this.proposals.map((p) => (p.id === mapped.id ? mapped : p))
+        }
+        break
+      }
+      case 'ordens_servico': {
+        const mapped = mapServiceOrder(record, clientMap)
+        if (action === 'delete') {
+          this.serviceOrders = this.serviceOrders.filter((s) => s.id !== mapped.id)
+        } else if (action === 'create') {
+          if (!this.serviceOrders.some((s) => s.id === mapped.id)) {
+            this.serviceOrders = [mapped, ...this.serviceOrders]
+          }
+        } else if (action === 'update') {
+          this.serviceOrders = this.serviceOrders.map((s) => (s.id === mapped.id ? mapped : s))
+        }
+        break
+      }
+      case 'notas_fiscais': {
+        const mapped = mapInvoice(record, clientMap)
+        if (action === 'delete') {
+          this.invoices = this.invoices.filter((i) => i.id !== mapped.id)
+        } else if (action === 'create') {
+          if (!this.invoices.some((i) => i.id === mapped.id)) {
+            this.invoices = [mapped, ...this.invoices]
+          }
+        } else if (action === 'update') {
+          this.invoices = this.invoices.map((i) => (i.id === mapped.id ? mapped : i))
+        }
+        break
+      }
+      case 'cobrancas': {
+        const mapped = mapCharge(record, clientMap)
+        if (action === 'delete') {
+          this.charges = this.charges.filter((c) => c.id !== mapped.id)
+        } else if (action === 'create') {
+          if (!this.charges.some((c) => c.id === mapped.id)) {
+            this.charges = [mapped, ...this.charges]
+          }
+        } else if (action === 'update') {
+          this.charges = this.charges.map((c) => (c.id === mapped.id ? mapped : c))
+        }
+        break
+      }
+    }
+
+    this.rebuildActivities()
     this.notify()
   }
 }
 
-export const DataStore = new DataStoreService()
+export const DataStore = new PocketBaseDataStore()

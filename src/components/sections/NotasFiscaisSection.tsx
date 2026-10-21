@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useCRM } from '../../context/CRMContext'
 import { Invoice, InvoiceStatus } from '../../types/crm'
-import { StatusBadge, EmptyState } from '../CommonUI'
+import { StatusBadge, EmptyState, TableSkeleton, ErrorState } from '../CommonUI'
 import { Modal } from '../FeedbackAndModal'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 
@@ -29,6 +29,10 @@ export const NotasFiscaisSection: React.FC = () => {
     companySettings,
     quickAction,
     setQuickAction,
+    isDataLoading,
+    isDataLoaded,
+    dataError,
+    refreshData,
   } = useCRM()
 
   const [searchTerm, setSearchTerm] = useState('')
@@ -130,6 +134,25 @@ export const NotasFiscaisSection: React.FC = () => {
     if (viewingInvoice?.id === invoice.id) {
       setViewingInvoice({ ...invoice, status: 'enviada' })
     }
+  }
+
+  if (!isDataLoaded && isDataLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="h-16 bg-white rounded-xl border border-[#E2E8F0] animate-pulse" />
+        <TableSkeleton rows={5} />
+      </div>
+    )
+  }
+
+  if (dataError && !isDataLoaded) {
+    return (
+      <ErrorState
+        title="Erro ao carregar Notas Fiscais"
+        message={dataError}
+        onRetry={() => refreshData()}
+      />
+    )
   }
 
   return (

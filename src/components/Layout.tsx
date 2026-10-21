@@ -46,6 +46,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
     userProfile,
     setQuickAction,
     addToast,
+    logout,
+    refreshData,
+    isDataLoading,
   } = useCRM()
 
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
@@ -239,9 +242,9 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               <button
                 onClick={() => {
                   setIsUserMenuOpen(false)
-                  addToast('info', 'Sessão de usuário finalizada (simulação).')
+                  logout()
                 }}
-                className="w-full text-left px-3 py-2 text-xs font-medium text-[#C0392B] hover:bg-red-50 rounded-lg flex items-center justify-between"
+                className="w-full text-left px-3 py-2 text-xs font-medium text-[#C0392B] hover:bg-red-50 rounded-lg flex items-center justify-between cursor-pointer"
               >
                 <span>Sair</span>
                 <LogOut className="w-3.5 h-3.5" />
@@ -267,6 +270,12 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
               <h1 className="text-lg sm:text-xl font-semibold text-[#1A202C] tracking-tight">
                 {getSectionTitle()}
               </h1>
+              {isDataLoading && (
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#0F4C5C]/10 text-[#0F4C5C] animate-pulse">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#0F4C5C] animate-ping" />
+                  Sincronizando...
+                </span>
+              )}
             </div>
 
             {/* Ação Contextual (Mobile topo compacto) */}
@@ -285,6 +294,16 @@ export const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) =>
 
           {/* Barra de Busca Global e Ação Contextual Desktop */}
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => refreshData()}
+              disabled={isDataLoading}
+              title="Sincronizar com banco PocketBase"
+              className="p-2 text-[#5A6B7B] hover:text-[#0F4C5C] rounded-xl hover:bg-[#F7F8FA] border border-[#E2E8F0] transition-colors disabled:opacity-50"
+            >
+              <Sparkles
+                className={`w-4 h-4 ${isDataLoading ? 'animate-spin text-[#0F4C5C]' : ''}`}
+              />
+            </button>
             <div ref={searchContainerRef} className="relative flex-1 sm:w-72">
               <Search className="w-4 h-4 text-[#5A6B7B] absolute left-3 top-1/2 -translate-y-1/2" />
               <input

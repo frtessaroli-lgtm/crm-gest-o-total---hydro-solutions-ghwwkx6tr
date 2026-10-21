@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import { useCRM } from '../../context/CRMContext'
 import { Client, ClientType, ClientStatus } from '../../types/crm'
-import { StatusBadge, EmptyState } from '../CommonUI'
+import { StatusBadge, EmptyState, TableSkeleton, ErrorState } from '../CommonUI'
 import { Modal } from '../FeedbackAndModal'
 import { ClientDetailsDrawer } from './ClientDetailsDrawer'
 import {
@@ -49,6 +49,10 @@ export const ClientesSection: React.FC = () => {
     saveClient,
     setActiveSection,
     addToast,
+    isDataLoading,
+    isDataLoaded,
+    dataError,
+    refreshData,
   } = useCRM()
 
   // Filtros locais
@@ -249,20 +253,20 @@ export const ClientesSection: React.FC = () => {
     return isNaN(n) ? 0 : n
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!validate()) return
 
     const parsedValue = parseMonthlyValue(formData.monthlyValue)
     const dueDayNum = Math.min(31, Math.max(1, Number(formData.dueDay) || 10))
 
-    const saved = saveClient({
+    const saved = await saveClient({
       id: editingClient ? editingClient.id : undefined,
       name: formData.name.trim(),
       type: formData.type,
+      document: formData.document.trim(),
       email: formData.email.trim(),
       phone: formData.phone.trim(),
-      document: formData.document.trim(),
       street: formData.street.trim(),
       number: formData.number.trim(),
       neighborhood: formData.neighborhood.trim(),
@@ -316,7 +320,7 @@ export const ClientesSection: React.FC = () => {
       const res = await syncClientWithMultiFoco(client.document, baseUrl, token)
 
       if (res.success && res.clientId) {
-        const updated = saveClient({
+        const updated = await saveClient({
           ...client,
           multifoco_client_id: res.clientId,
         })
@@ -426,6 +430,25 @@ export const ClientesSection: React.FC = () => {
       <ArrowUp className="w-3.5 h-3.5 text-[#0F4C5C] inline-block ml-1" />
     ) : (
       <ArrowDown className="w-3.5 h-3.5 text-[#0F4C5C] inline-block ml-1" />
+    )
+  }
+
+  if (!isDataLoaded && isDataLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="h-16 bg-white rounded-xl border border-[#E2E8F0] animate-pulse" />
+        <TableSkeleton rows={6} />
+      </div>
+    )
+  }
+
+  if (dataError && !isDataLoaded) {
+    return (
+      <ErrorState
+        title="Erro ao carregar Clientes"
+        message={dataError}
+        onRetry={() => refreshData()}
+      />
     )
   }
 

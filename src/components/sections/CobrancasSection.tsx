@@ -20,7 +20,7 @@ import {
 } from 'lucide-react'
 import { useCRM } from '../../context/CRMContext'
 import { Charge, ChargeStatus } from '../../types/crm'
-import { StatusBadge, EmptyState } from '../CommonUI'
+import { StatusBadge, EmptyState, TableSkeleton, ErrorState } from '../CommonUI'
 import { Modal } from '../FeedbackAndModal'
 import {
   formatCurrency,
@@ -42,14 +42,17 @@ export const CobrancasSection: React.FC = () => {
     clients,
     globalSearch,
     saveCharge,
+    checkAndExpireCharges,
     registerPayment,
     cancelCharge,
-    checkAndExpireCharges,
     quickAction,
     setQuickAction,
     addToast,
+    isDataLoading,
+    isDataLoaded,
+    dataError,
+    refreshData,
   } = useCRM()
-
   // Efeito de auto-vencimento ao montar ou carregar a seção
   useEffect(() => {
     checkAndExpireCharges()
@@ -438,6 +441,32 @@ export const CobrancasSection: React.FC = () => {
     statusFilter !== 'Todos' ||
     competenceFilter !== 'todas' ||
     clientFilter !== 'todos'
+
+  if (!isDataLoaded && isDataLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-white p-5 rounded-xl border border-[#E2E8F0] space-y-3">
+              <div className="h-4 bg-slate-100 rounded w-1/2" />
+              <div className="h-7 bg-slate-100 rounded w-3/4" />
+            </div>
+          ))}
+        </div>
+        <TableSkeleton rows={6} />
+      </div>
+    )
+  }
+
+  if (dataError && !isDataLoaded) {
+    return (
+      <ErrorState
+        title="Erro ao carregar Cobranças"
+        message={dataError}
+        onRetry={() => refreshData()}
+      />
+    )
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">

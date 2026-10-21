@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useCRM } from '../../context/CRMContext'
 import { Proposal, ProposalItem, ProposalStatus } from '../../types/crm'
-import { StatusBadge, EmptyState } from '../CommonUI'
+import { StatusBadge, EmptyState, TableSkeleton, ErrorState } from '../CommonUI'
 import { Modal } from '../FeedbackAndModal'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 
@@ -31,6 +31,10 @@ export const PropostasSection: React.FC = () => {
     saveServiceOrder,
     quickAction,
     setQuickAction,
+    isDataLoading,
+    isDataLoaded,
+    dataError,
+    refreshData,
   } = useCRM()
 
   const [searchTerm, setSearchTerm] = useState('')
@@ -204,6 +208,25 @@ export const PropostasSection: React.FC = () => {
         status: 'aberta',
       })
     }
+  }
+
+  if (!isDataLoaded && isDataLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="h-16 bg-white rounded-xl border border-[#E2E8F0] animate-pulse" />
+        <TableSkeleton rows={5} />
+      </div>
+    )
+  }
+
+  if (dataError && !isDataLoaded) {
+    return (
+      <ErrorState
+        title="Erro ao carregar Propostas"
+        message={dataError}
+        onRetry={() => refreshData()}
+      />
+    )
   }
 
   return (

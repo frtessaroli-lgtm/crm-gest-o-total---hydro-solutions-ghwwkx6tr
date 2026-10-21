@@ -28,6 +28,10 @@ export const DashboardSection: React.FC = () => {
     setQuickAction,
     checkAndExpireCharges,
     registerPayment,
+    isDataLoading,
+    isDataLoaded,
+    dataError,
+    refreshData,
   } = useCRM()
 
   // Garante auto-vencimento consistente ao montar
@@ -384,6 +388,41 @@ export const DashboardSection: React.FC = () => {
       return daysB - daysA
     })
   }, [normalizedCharges])
+
+  if (!isDataLoaded && isDataLoading) {
+    return (
+      <div className="space-y-8 animate-fade-in">
+        <div className="h-14 bg-white rounded-xl border border-[#E2E8F0] animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-white p-5 rounded-xl border border-[#E2E8F0] space-y-3">
+              <div className="h-4 bg-slate-100 rounded w-1/2" />
+              <div className="h-7 bg-slate-100 rounded w-3/4" />
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-pulse">
+          <div className="h-72 bg-white rounded-xl border border-[#E2E8F0]" />
+          <div className="h-72 bg-white rounded-xl border border-[#E2E8F0]" />
+        </div>
+      </div>
+    )
+  }
+
+  if (dataError && !isDataLoaded) {
+    return (
+      <div className="p-8 text-center bg-white rounded-xl border border-red-200 shadow-sm">
+        <h3 className="text-base font-semibold text-[#1A202C] mb-2">Erro ao carregar Dashboard</h3>
+        <p className="text-sm text-[#5A6B7B] mb-4">{dataError}</p>
+        <button
+          onClick={() => refreshData()}
+          className="px-4 py-2 bg-[#0F4C5C] hover:bg-[#0C3D4B] text-white rounded-lg text-sm font-semibold transition-all shadow-sm"
+        >
+          Tentar Novamente
+        </button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-8 animate-fade-in">

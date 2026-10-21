@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import { useCRM } from '../../context/CRMContext'
 import { ServiceOrder, ServiceOrderStatus } from '../../types/crm'
-import { StatusBadge, EmptyState } from '../CommonUI'
+import { StatusBadge, EmptyState, TableSkeleton, ErrorState } from '../CommonUI'
 import { Modal } from '../FeedbackAndModal'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 
@@ -29,6 +29,10 @@ export const OrdensServicoSection: React.FC = () => {
     updateServiceOrderStatus,
     quickAction,
     setQuickAction,
+    isDataLoading,
+    isDataLoaded,
+    dataError,
+    refreshData,
   } = useCRM()
 
   const [searchTerm, setSearchTerm] = useState('')
@@ -161,6 +165,25 @@ export const OrdensServicoSection: React.FC = () => {
     if (viewingOS?.id === os.id) {
       setViewingOS({ ...os, status: 'concluida' })
     }
+  }
+
+  if (!isDataLoaded && isDataLoading) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <div className="h-16 bg-white rounded-xl border border-[#E2E8F0] animate-pulse" />
+        <TableSkeleton rows={5} />
+      </div>
+    )
+  }
+
+  if (dataError && !isDataLoaded) {
+    return (
+      <ErrorState
+        title="Erro ao carregar Ordens de Serviço"
+        message={dataError}
+        onRetry={() => refreshData()}
+      />
+    )
   }
 
   return (

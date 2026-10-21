@@ -1,5 +1,5 @@
 import React from 'react'
-import { FolderOpen, Plus, Sparkles } from 'lucide-react'
+import { FolderOpen, Plus, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react'
 
 interface EmptyStateProps {
   icon?: React.ReactNode
@@ -7,6 +7,69 @@ interface EmptyStateProps {
   description: string
   actionLabel?: string
   onAction?: () => void
+}
+
+export const ErrorState: React.FC<{
+  title?: string
+  message: string
+  onRetry?: () => void
+}> = ({ title = 'Erro ao carregar dados', message, onRetry }) => {
+  return (
+    <div className="flex flex-col items-center justify-center p-8 sm:p-12 text-center bg-white rounded-xl border border-red-200 shadow-sm my-4">
+      <div className="w-12 h-12 rounded-full bg-red-50 text-[#C0392B] flex items-center justify-center mb-3">
+        <AlertTriangle className="w-6 h-6" />
+      </div>
+      <h3 className="text-base font-semibold text-[#1A202C] mb-1">{title}</h3>
+      <p className="text-xs sm:text-sm text-[#5A6B7B] max-w-md mb-5 leading-relaxed">{message}</p>
+      {onRetry && (
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-[#0F4C5C] hover:bg-[#0C3D4B] text-white rounded-lg text-xs sm:text-sm font-semibold transition-all shadow-sm cursor-pointer"
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>Tentar Novamente</span>
+        </button>
+      )}
+    </div>
+  )
+}
+
+export const TableSkeleton: React.FC<{ rows?: number }> = ({ rows = 5 }) => {
+  return (
+    <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm p-4 animate-pulse space-y-4">
+      <div className="h-8 bg-slate-100 rounded-lg w-1/3 mb-4" />
+      {Array.from({ length: rows }).map((_, i) => (
+        <div
+          key={i}
+          className="flex items-center justify-between gap-4 py-3 border-b border-[#E2E8F0] last:border-0"
+        >
+          <div className="space-y-2 flex-1">
+            <div className="h-4 bg-slate-100 rounded w-1/4" />
+            <div className="h-3 bg-slate-100/60 rounded w-1/2" />
+          </div>
+          <div className="h-6 bg-slate-100 rounded-full w-20" />
+          <div className="h-4 bg-slate-100 rounded w-24 hidden sm:block" />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export const CardSkeleton: React.FC<{ count?: number }> = ({ count = 4 }) => {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
+      {Array.from({ length: count }).map((_, i) => (
+        <div
+          key={i}
+          className="bg-white p-5 rounded-xl border border-[#E2E8F0] shadow-sm space-y-3"
+        >
+          <div className="h-4 bg-slate-100 rounded w-1/2" />
+          <div className="h-7 bg-slate-100 rounded w-3/4" />
+          <div className="h-3 bg-slate-100/60 rounded w-1/3" />
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export const EmptyState: React.FC<EmptyStateProps> = ({
